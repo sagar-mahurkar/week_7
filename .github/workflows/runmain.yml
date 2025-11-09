@@ -43,7 +43,7 @@ jobs:
       # Configure DVC to use your GCS bucket
       - name: Setup DVC Remote
         env:
-          GCP_BUCKET: "gs://mlops-course-lively-nimbus-473407-m9"
+          GCP_BUCKET: "gs://mlops-lively-nimbus-473407-m9"
         run: |
           dvc remote add -f -d gcs_remote $GCP_BUCKET
 
@@ -67,10 +67,25 @@ jobs:
           echo "Checking out data version: ${{ matrix.data_version }}"
           git fetch --tags
           git checkout ${{ matrix.data_version }}
-          dvc pull || true
+          echo "===== DVC CONFIG ====="
+          dvc remote list
+          dvc remote list --local || true
+          cat .dvc/config || true
+          echo "===== PULLING DATA ====="
+          dvc pull -v || exit 1
           echo "✅ Pulled DVC data successfully"
-          ls -lh
-          ls -lh data* || true
+          echo "===== FILES IN WORKSPACE ====="
+          ls -R .
+
+      # Verify that data.csv exists before training
+      - name: Verify data.csv exists
+        run: |
+          if [ ! -f data.csv ] && [ ! -f data/data.csv ]; then
+            echo "❌ data.csv not found after DVC pull!"
+            ls -R .
+            exit 1
+          fi
+          echo "✅ data.csv found!"
 
       # Run your training script
       - name: Train the model
@@ -92,5 +107,4 @@ jobs:
           echo "\`\`\`" >> report.md
           cat main_output.txt >> report.md
           echo "\`\`\`" >> report.md
-
           cml comment create --publish report.md
