@@ -1,35 +1,35 @@
 # ==============================================================
-# GitHub Actions Workflow: Sanity test
-# Runs automatically on push/PR to ANY branch + manual dispatch
-# Used to verify DVC data sync, training, and unit tests
+# GitHub Actions Workflow: Test
+# Runs on push/PR merge + manual trigger
 # ==============================================================
 
-name: Sanity test
+name: Test
 
 # --------------------------------------------------------------
-# Trigger conditions
+# Trigger Conditions
 # --------------------------------------------------------------
 on:
-  # ✅ Allow manual trigger from GitHub Actions tab for ANY branch
+  # ✅ Manual trigger from the GitHub Actions tab
   workflow_dispatch:
 
-  # ✅ Automatically trigger on push to ANY branch when certain files change
+  # ✅ Automatically run on pushes to any branch
   push:
     branches:
-      - '**'                     # all branches
+      - "**"
     paths:
-      - '**.py'                  # Python scripts
-      - '**.ipynb'               # Jupyter notebooks
-      - 'requirements.txt'       # Dependencies
-      - 'artifacts/**'           # Artifacts folder
+      - "**.py"
+      - "**.ipynb"
+      - "requirements.txt"
+      - "data/**"
+      - "artifacts/**"
 
-  # ✅ Automatically run for pull requests into ANY branch
+  # ✅ Automatically run for pull requests to any branch
   pull_request:
     branches:
-      - '**'
+      - "**"
 
 # --------------------------------------------------------------
-# Permissions - allows posting results/comments on PRs
+# Permissions for accessing repo content and PR comments
 # --------------------------------------------------------------
 permissions:
   contents: write
@@ -40,16 +40,16 @@ permissions:
 # --------------------------------------------------------------
 jobs:
   test_model:
-    runs-on: ubuntu-latest  # Runner environment
+    runs-on: ubuntu-latest
 
-    # ✅ Test with multiple data versions (via DVC/Git tags)
+    # Optional: Define multiple data versions to test
     strategy:
       matrix:
         data_version: [v1.0, v2.0]
 
     steps:
       # ----------------------------------------------------------
-      # Step 1: Checkout repo with full history (required for DVC)
+      # Step 1: Checkout repo (full history required for DVC)
       # ----------------------------------------------------------
       - uses: actions/checkout@v3
         with:
@@ -57,26 +57,26 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
       # ----------------------------------------------------------
-      # Step 2: Setup Python environment
+      # Step 2: Setup Python
       # ----------------------------------------------------------
       - uses: actions/setup-python@v4
         with:
           python-version: "3.9"
 
       # ----------------------------------------------------------
-      # Step 3: Setup Continuous Machine Learning (CML) tools
+      # Step 3: Setup CML (for PR comment reports)
       # ----------------------------------------------------------
       - uses: iterative/setup-cml@v2
 
       # ----------------------------------------------------------
-      # Step 4: Install project dependencies
+      # Step 4: Install dependencies
       # ----------------------------------------------------------
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
 
       # ----------------------------------------------------------
-      # Step 5: Setup DVC to use GCS as remote storage
+      # Step 5: Configure DVC remote (GCS)
       # ----------------------------------------------------------
       - name: Setup DVC Remote
         env:
@@ -85,8 +85,7 @@ jobs:
           dvc remote add -f -d gcs_remote $GCP_BUCKET
 
       # ----------------------------------------------------------
-      # Step 6: Authenticate to Google Cloud using service account key
-      # The key is stored in GitHub Secrets as GCP_CREDENTIALS_JSON
+      # Step 6: Authenticate to GCP
       # ----------------------------------------------------------
       - name: Authenticate to GCP
         env:
@@ -97,26 +96,29 @@ jobs:
           dvc remote modify gcs_remote credentialpath /tmp/gcp_key.json
 
       # ----------------------------------------------------------
-      # Step 7: Verify that authentication works (optional)
+      # Step 7: Verify bucket access
       # ----------------------------------------------------------
       - name: Verify GCP access
         run: |
           gsutil ls gs://mlops-lively-nimbus-473407-m9 || echo "⚠️ Could not list bucket contents"
 
       # ----------------------------------------------------------
-      # Step 8: Checkout the correct data version and pull DVC data
+      # Step 8: Checkout and pull DVC data
       # ----------------------------------------------------------
       - name: Checkout and Pull DVC Data
         run: |
           echo "📦 Checking out data version: ${{ matrix.data_version }}"
           git fetch --tags
           git checkout ${{ matrix.data_version }}
+          echo "===== DVC CONFIG ====="
+          dvc remote list
+          cat .dvc/config || true
+          echo "===== PULLING DATA ====="
           dvc pull -v || exit 1
-          echo "✅ DVC data pulled successfully"
-          ls -R .
+          echo "✅ Pulled DVC data successfully"
 
       # ----------------------------------------------------------
-      # Step 9: Verify data.csv is available after DVC pull
+      # Step 9: Verify data file
       # ----------------------------------------------------------
       - name: Verify data.csv exists
         run: |
@@ -128,45 +130,29 @@ jobs:
           echo "✅ data.csv found!"
 
       # ----------------------------------------------------------
-      # Step 10: Train the model
+      # Step 10: Run tests
       # ----------------------------------------------------------
-      - name: Train the model
+      - name: Run tests
         run: |
-          python train.py > main_output.txt 2>&1 || true
+          pytest > test_output.txt 2>&1 || true
 
       # ----------------------------------------------------------
-      # Step 11: Run unit tests (discovered automatically)
+      # Step 11: Display test output
       # ----------------------------------------------------------
-      - name: Run unit tests
+      - name: Debug — show test output
         run: |
-          python -m unittest discover -v > test_output.txt 2>&1 || true
-
-      # ----------------------------------------------------------
-      # Step 12: Show debug logs in case of failure
-      # ----------------------------------------------------------
-      - name: Debug — show outputs
-        run: |
-          echo "=== 🧠 Training Log ==="
-          cat main_output.txt || true
           echo "=== 🧪 Test Log ==="
           cat test_output.txt || true
 
       # ----------------------------------------------------------
-      # Step 13: Generate and post a CML report as a PR comment
+      # Step 12: Post CML report as PR comment
       # ----------------------------------------------------------
       - name: Create CML report
         env:
           REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "## 📊 Accuracy Output for ${{ matrix.data_version }}" > report.md
-          echo "\`\`\`" >> report.md
-          cat main_output.txt >> report.md
-          echo "\`\`\`" >> report.md
-
-          echo "## ✅ Test Report for ${{ matrix.data_version }}" >> report.md
+          echo "## 🧪 Test Results for ${{ matrix.data_version }}" > report.md
           echo "\`\`\`" >> report.md
           cat test_output.txt >> report.md
           echo "\`\`\`" >> report.md
-
-          # Post the report as a comment on the PR
           cml comment create --publish report.md
