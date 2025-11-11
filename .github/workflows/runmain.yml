@@ -76,7 +76,7 @@ jobs:
       # ----------------------------------------------------------
       - name: Setup DVC Remote
         env:
-          GCP_BUCKET: "gs://mlops-hopeful-history-477911-c1"
+          GCP_BUCKET: "gs://mlops-lively-nimbus-473407-m9"
           GCP_CREDENTIALS_JSON: ${{ secrets.GCP_CREDENTIALS_JSON }}
         run: |
           echo "$GCP_CREDENTIALS_JSON" > gcp-key.json
@@ -93,7 +93,7 @@ jobs:
       - name: Verify GCP Access
         run: |
           echo "🧾 Checking bucket accessibility..."
-          gsutil ls gs://mlops-hopeful-history-477911-c1 || echo "⚠️ Could not list bucket contents"
+          gsutil ls gs://mlops-lively-nimbus-473407-m9 || echo "⚠️ Could not list bucket contents"
 
       # ----------------------------------------------------------
       # Step 7: Pull DVC data (no version switching)
