@@ -3,7 +3,7 @@ import sys
 import mlflow
 from mlflow.tracking import MlflowClient
 
-URI = "http://34.68.148.202:5000/"
+URI = "http://107.178.217.196:5000/"
 NAME = "iris-random-forest"
 PATH = "downloaded_models"
 
