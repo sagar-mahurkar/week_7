@@ -46,7 +46,6 @@ jobs:
       
       # -----------------------------------------------------------
       # Install GKE Auth Plugin (FIX for executable not found)
-      # This is required for kubectl to securely access GKE clusters.
       # -----------------------------------------------------------
       - name: Install GKE Auth Plugin
         run: gcloud components install gke-gcloud-auth-plugin --quiet
@@ -102,6 +101,17 @@ jobs:
           gcloud container clusters get-credentials "${CLUSTER_NAME}" \
             --region "${CLUSTER_LOCATION}" \
             --project "${PROJECT_ID}"
+
+      # -----------------------------------------------------------
+      # Debug Kubernetes Deployments (NEW STEP)
+      # This checks the cluster for existing deployments and logs the names.
+      # -----------------------------------------------------------
+      - name: Debug Kubernetes Deployments
+        run: |
+          echo "🔍 Checking existing deployments in 'default' namespace..."
+          kubectl get deployments --namespace default || true
+          echo "---"
+          echo "If 'iris-api-deployment' is not listed above, please update the deployment name in the next step."
 
       # -----------------------------------------------------------
       # Deploy updated image to GKE
