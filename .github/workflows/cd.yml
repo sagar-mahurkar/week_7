@@ -114,16 +114,21 @@ jobs:
 
       # -----------------------------------------------------------
       # Deploy updated image to GKE
-      # Note: 'demo-iris-workload' is now used as the deployment name.
+      # Note: The container name is now set to 'demo-iris-workload' (same as deployment name).
       # -----------------------------------------------------------
       - name: Deploy updated image to GKE
         run: |
           IMAGE_URI="${GAR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE}:latest"
           echo "🔄 Updating deployment image to $IMAGE_URI"
-          # 'demo-iris-workload' is the deployment name.
-          # '${IMAGE}' (iris-api) is assumed to be the container name inside the deployment.
+          
+          # --- Debug: Check actual container names (if needed) ---
+          echo "🔍 Describing deployment to check container names in case of failure..."
+          kubectl describe deployment demo-iris-workload --namespace default | grep "Container Name:" || true
+          echo "---"
+          
+          # We are trying the deployment name as the container name.
           kubectl set image deployment/demo-iris-workload \
-            ${IMAGE}="$IMAGE_URI" \
+            demo-iris-workload="$IMAGE_URI" \
             --namespace default
           echo "⏳ Waiting for rollout..."
           kubectl rollout status deployment/demo-iris-workload
