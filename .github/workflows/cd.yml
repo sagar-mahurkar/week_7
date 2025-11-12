@@ -13,6 +13,8 @@ env:
   IMAGE: iris-api
   CLUSTER_NAME: ${{ secrets.GKE_CLUSTER }}
   CLUSTER_LOCATION: ${{ secrets.GKE_LOCATION }}
+  DEPLOYMENT_NAME: demo-iris-workload
+  NAMESPACE: default
 
 jobs:
   deploy:
@@ -27,7 +29,7 @@ jobs:
         uses: actions/checkout@v4
 
       # -----------------------------------------------------------
-      # Authenticate to GCP using the Service Account Key
+      # Authenticate to GCP using Service Account Key
       # -----------------------------------------------------------
       - name: Authenticate Google Cloud
         uses: google-github-actions/auth@v2
@@ -35,23 +37,22 @@ jobs:
           credentials_json: ${{ secrets.GCP_CREDENTIALS_JSON }}
 
       # -----------------------------------------------------------
-      # Set up gcloud configuration and project context
+      # Configure gcloud CLI
       # -----------------------------------------------------------
       - name: Configure gcloud CLI
         uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ env.PROJECT_ID }}
-          # This ensures Docker, kubectl, and gcloud use the credentials from the 'auth' step
-          export_default_credentials: true 
-      
+          export_default_credentials: true
+
       # -----------------------------------------------------------
-      # Install GKE Auth Plugin (FIX for executable not found)
+      # Install GKE Auth Plugin (fix for 'executable not found')
       # -----------------------------------------------------------
       - name: Install GKE Auth Plugin
         run: gcloud components install gke-gcloud-auth-plugin --quiet
 
       # -----------------------------------------------------------
-      # Debug authentication (Now should work)
+      # Debug authentication and project
       # -----------------------------------------------------------
       - name: Debug gcloud auth
         run: |
@@ -82,10 +83,10 @@ jobs:
       # -----------------------------------------------------------
       - name: Debug local Docker images
         run: |
-          docker images | grep iris-api || echo "❌ No local iris-api image found"
+          docker images | grep $IMAGE || echo "❌ No local $IMAGE image found"
 
       # -----------------------------------------------------------
-      # Push Docker image
+      # Push Docker image to Artifact Registry
       # -----------------------------------------------------------
       - name: Push Docker image
         run: |
@@ -103,32 +104,33 @@ jobs:
             --project "${PROJECT_ID}"
 
       # -----------------------------------------------------------
-      # Debug Kubernetes Deployments 
+      # Debug existing deployments
       # -----------------------------------------------------------
       - name: Debug Kubernetes Deployments
         run: |
-          echo "🔍 Checking existing deployments in 'default' namespace..."
-          kubectl get deployments --namespace default || true
+          echo "🔍 Existing deployments in '$NAMESPACE' namespace:"
+          kubectl get deployments --namespace $NAMESPACE || true
           echo "---"
-          echo "Current deployment target is 'demo-iris-workload'."
 
       # -----------------------------------------------------------
-      # Deploy updated image to GKE
-      # Note: The container name is now set to 'demo-iris-workload' (same as deployment name).
+      # Deploy updated image to GKE (auto-detect container name)
       # -----------------------------------------------------------
       - name: Deploy updated image to GKE
         run: |
           IMAGE_URI="${GAR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE}:latest"
-          echo "🔄 Updating deployment image to $IMAGE_URI"
+          echo "🔄 Updating deployment '$DEPLOYMENT_NAME' with image: $IMAGE_URI"
+
+          # --- Auto-detect container name ---
+          CONTAINER_NAME=$(kubectl get deployment "$DEPLOYMENT_NAME" \
+            --namespace "$NAMESPACE" \
+            -o jsonpath='{.spec.template.spec.containers[0].name}')
           
-          # --- Debug: Check actual container names (if needed) ---
-          echo "🔍 Describing deployment to check container names in case of failure..."
-          kubectl describe deployment demo-iris-workload --namespace default | grep "Container Name:" || true
-          echo "---"
-          
-          # We are trying the deployment name as the container name.
-          kubectl set image deployment/demo-iris-workload \
-            demo-iris-workload="$IMAGE_URI" \
-            --namespace default
+          echo "🔍 Detected container name: $CONTAINER_NAME"
+
+          # --- Update the image ---
+          kubectl set image deployment/"$DEPLOYMENT_NAME" \
+            "$CONTAINER_NAME"="$IMAGE_URI" \
+            --namespace "$NAMESPACE"
+
           echo "⏳ Waiting for rollout..."
-          kubectl rollout status deployment/demo-iris-workload
+          kubectl rollout status deployment/"$DEPLOYMENT_NAME" --namespace "$NAMESPACE"
