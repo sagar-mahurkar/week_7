@@ -103,23 +103,25 @@ jobs:
             --project "${PROJECT_ID}"
 
       # -----------------------------------------------------------
-      # Debug Kubernetes Deployments (NEW STEP)
-      # This checks the cluster for existing deployments and logs the names.
+      # Debug Kubernetes Deployments 
       # -----------------------------------------------------------
       - name: Debug Kubernetes Deployments
         run: |
           echo "🔍 Checking existing deployments in 'default' namespace..."
           kubectl get deployments --namespace default || true
           echo "---"
-          echo "If 'iris-api-deployment' is not listed above, please update the deployment name in the next step."
+          echo "Current deployment target is 'demo-iris-workload'."
 
       # -----------------------------------------------------------
       # Deploy updated image to GKE
+      # Note: 'demo-iris-workload' is now used as the deployment name.
       # -----------------------------------------------------------
       - name: Deploy updated image to GKE
         run: |
           IMAGE_URI="${GAR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE}:latest"
           echo "🔄 Updating deployment image to $IMAGE_URI"
+          # 'demo-iris-workload' is the deployment name.
+          # '${IMAGE}' (iris-api) is assumed to be the container name inside the deployment.
           kubectl set image deployment/demo-iris-workload \
             ${IMAGE}="$IMAGE_URI" \
             --namespace default
