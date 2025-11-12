@@ -28,11 +28,6 @@ jobs:
 
       # -----------------------------------------------------------
       # Authenticate to GCP using the Service Account Key
-      # FIX: Replaced manual decoding and setup-gcloud file path with the
-      # more robust google-github-actions/auth.
-      #
-      # IMPORTANT: Ensure the secret GCP_CREDENTIALS_JSON contains the
-      # RAW JSON of the service account key (not Base64 encoded).
       # -----------------------------------------------------------
       - name: Authenticate Google Cloud
         uses: google-github-actions/auth@v2
@@ -48,6 +43,13 @@ jobs:
           project_id: ${{ env.PROJECT_ID }}
           # This ensures Docker, kubectl, and gcloud use the credentials from the 'auth' step
           export_default_credentials: true 
+      
+      # -----------------------------------------------------------
+      # Install GKE Auth Plugin (FIX for executable not found)
+      # This is required for kubectl to securely access GKE clusters.
+      # -----------------------------------------------------------
+      - name: Install GKE Auth Plugin
+        run: gcloud components install gke-gcloud-auth-plugin --quiet
 
       # -----------------------------------------------------------
       # Debug authentication (Now should work)
