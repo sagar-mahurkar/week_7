@@ -98,28 +98,75 @@ jobs:
             --project "${PROJECT_ID}"
 
       # -----------------------------------------------------------
-      # 10. Deploy updated image to GKE
+      # 10. Deploy updated image to GKE (with diagnostics)
       # -----------------------------------------------------------
       - name: Deploy updated image to GKE
+        env:
+          DEPLOYMENT_NAME: iris-api-deployment
         run: |
+          set -e  # Exit immediately on error
+          echo "🚀 Starting GKE Deployment Debugging..."
+
           IMAGE_URI="${GAR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE}:latest"
-          echo "🔄 Updating deployment '$DEPLOYMENT_NAME' with image: $IMAGE_URI"
+          echo "🔄 Updating deployment '${DEPLOYMENT_NAME}' with image: ${IMAGE_URI}"
 
-          # Auto-detect container name to prevent errors if it differs from deployment name
-          CONTAINER_NAME=$(kubectl get deployment "$DEPLOYMENT_NAME" \
-            --namespace "$NAMESPACE" \
-            -o jsonpath='{.spec.template.spec.containers[0].name}')
-          
-          echo "🔍 Using detected container name: $CONTAINER_NAME"
+          echo "📦 Project: ${PROJECT_ID} | Repo: ${REPOSITORY} | Namespace: ${NAMESPACE:-default}"
 
-          # Update the deployment image
-          kubectl set image deployment/"$DEPLOYMENT_NAME" \
-            "$CONTAINER_NAME"="$IMAGE_URI" \
-            --namespace "$NAMESPACE"
+          # --- Debug: show context & deployments ---
+          echo "🔍 Checking current kubectl context..."
+          kubectl config current-context || echo "⚠️ No active context"
+          echo "📋 Listing deployments in '${NAMESPACE:-default}'..."
+          kubectl get deployments -n "${NAMESPACE:-default}"
 
-          # Wait for the rollout to complete and confirm success
-          echo "⏳ Waiting for rollout..."
-          kubectl rollout status deployment/"$DEPLOYMENT_NAME" --namespace "$NAMESPACE" --timeout=5m
+          # --- Verify deployment exists ---
+          if ! kubectl get deployment "${DEPLOYMENT_NAME}" -n "${NAMESPACE:-default}" >/dev/null 2>&1; then
+            echo "❌ Deployment '${DEPLOYMENT_NAME}' not found."
+            echo "🧠 Tip: Ensure your deployment YAML has been applied via 'kubectl apply -f deployment.yaml'"
+            exit 1
+          fi
+
+          # --- Detect container name automatically ---
+          CONTAINER_NAME=$(kubectl get deployment "${DEPLOYMENT_NAME}" \
+            -n "${NAMESPACE:-default}" \
+            -o jsonpath='{.spec.template.spec.containers[0].name}' 2>/dev/null || echo "")
+          if [ -z "$CONTAINER_NAME" ]; then
+            echo "⚠️ Could not detect container name automatically, using '${DEPLOYMENT_NAME}' as fallback."
+            CONTAINER_NAME="${DEPLOYMENT_NAME}"
+          fi
+          echo "✅ Using container name: ${CONTAINER_NAME}"
+
+          # --- Update deployment image ---
+          echo "🔧 Running: kubectl set image deployment/${DEPLOYMENT_NAME} ${CONTAINER_NAME}=${IMAGE_URI}"
+          kubectl set image deployment/${DEPLOYMENT_NAME} ${CONTAINER_NAME}=${IMAGE_URI} -n "${NAMESPACE:-default}"
+
+          # --- Wait for rollout completion ---
+          echo "⏳ Waiting for rollout to complete..."
+          if ! kubectl rollout status deployment/${DEPLOYMENT_NAME} -n "${NAMESPACE:-default}" --timeout=5m; then
+            echo "❌ Rollout failed or timed out."
+            echo "🩺 Starting automatic diagnostics..."
+
+            echo "📜 Deployment Description:"
+            kubectl describe deployment ${DEPLOYMENT_NAME} -n "${NAMESPACE:-default}" || true
+
+            echo "📋 Pods:"
+            kubectl get pods -n "${NAMESPACE:-default}" -l app=${DEPLOYMENT_NAME} -o wide || true
+
+            POD_NAME=$(kubectl get pods -n "${NAMESPACE:-default}" -l app=${DEPLOYMENT_NAME} -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+            if [ -n "$POD_NAME" ]; then
+              echo "🪵 Logs from Pod: ${POD_NAME}"
+              kubectl logs ${POD_NAME} -n "${NAMESPACE:-default}" --tail=50 || true
+              echo "🪵 Previous container logs (if restarted):"
+              kubectl logs ${POD_NAME} -n "${NAMESPACE:-default}" --previous --tail=50 || true
+            else
+              echo "⚠️ No pods found for ${DEPLOYMENT_NAME}"
+            fi
+
+            echo "❗ Rollout failed diagnostics complete. Exiting with error."
+            exit 1
+          fi
+
+          echo "✅ Deployment '${DEPLOYMENT_NAME}' successfully updated to image: ${IMAGE_URI}"
+
 
       # -----------------------------------------------------------
       # 11. Optional: Verify rollout
