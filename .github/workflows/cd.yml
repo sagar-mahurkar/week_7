@@ -101,8 +101,6 @@ jobs:
       # 10. Deploy updated image to GKE (with diagnostics)
       # -----------------------------------------------------------
       - name: Deploy updated image to GKE
-        env:
-          DEPLOYMENT_NAME: iris-api-deployment
         run: |
           set -e  # Exit immediately on error
           echo "🚀 Starting GKE Deployment Debugging..."
