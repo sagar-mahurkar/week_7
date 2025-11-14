@@ -1,11 +1,11 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: iris-fastapi-deployment
+  name: iris-workload-deployment
   labels:
     app: iris-api
 spec:
-  replicas: 2  # adjust replicas based on load
+  replicas: 3
   selector:
     matchLabels:
       app: iris-api
@@ -15,11 +15,11 @@ spec:
         app: iris-api
     spec:
       containers:
-        - name: iris-api-container
+        - name: iris-api
           image: us-central1-docker.pkg.dev/lively-nimbus-473407-m9/my-repo/iris-api:latest
           imagePullPolicy: Always
           ports:
-            - containerPort: 80
+            - containerPort: 8000
           resources:
             requests:
               cpu: "100m"
@@ -30,13 +30,13 @@ spec:
           readinessProbe:
             httpGet:
               path: /health
-              port: 80
+              port: 8000
             initialDelaySeconds: 5
             periodSeconds: 10
           livenessProbe:
             httpGet:
               path: /health
-              port: 80
+              port: 8000
             initialDelaySeconds: 15
             periodSeconds: 20
       restartPolicy: Always
@@ -44,11 +44,13 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: iris-fastapi-service
+  name: iris-workload-deployment-service
+  labels:
+    app: iris-api
 spec:
   type: LoadBalancer
   selector:
     app: iris-api
   ports:
     - port: 80
-      targetPort: 80
+      targetPort: 8000
