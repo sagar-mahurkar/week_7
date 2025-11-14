@@ -14,7 +14,7 @@ env:
   IMAGE: iris-api # Docker image/application name
   CLUSTER_NAME: ${{ secrets.GKE_CLUSTER }} # GKE cluster name
   CLUSTER_LOCATION: ${{ secrets.GKE_LOCATION }} # Cluster region/zone
-  DEPLOYMENT_NAME: iris-fastapi-deployment # Kubernetes Deployment name
+  DEPLOYMENT_NAME: iris-workload-deployment	 # Kubernetes Deployment name
   NAMESPACE: default # Kubernetes namespace
 
 jobs:
