@@ -6,7 +6,7 @@ metadata:
   labels:
     app: iris-api
 spec:
-  replicas: 1  # Start with 1 replica for debugging
+  replicas: 3  # Start with 1 replica for debugging
   selector:
     matchLabels:
       app: iris-api
