@@ -6,7 +6,7 @@ metadata:
   labels:
     app: iris-api
 spec:
-  replicas: 2  # Start with 2 replicas for testing
+  replicas: 1  # Start with 1 replica for debugging
   selector:
     matchLabels:
       app: iris-api
@@ -22,13 +22,13 @@ spec:
     spec:
       containers:
         - name: iris-api
-          image: us-central1-docker.pkg.dev/<PROJECT_ID>/<REPOSITORY>/iris-api:latest
+          image: us-central1-docker.pkg.dev/lively-nimbus-473407-m9/my-repo/iris-api:latest
           ports:
             - containerPort: 8000
           resources:
             requests:
-              cpu: 250m       # reduced from 100m–500m range
-              memory: 256Mi   # reduced from 128Mi–512Mi
+              cpu: 250m
+              memory: 256Mi
             limits:
               cpu: 500m
               memory: 512Mi
@@ -36,7 +36,7 @@ spec:
             httpGet:
               path: /health
               port: 8000
-            initialDelaySeconds: 30  # increased to give FastAPI time to start
+            initialDelaySeconds: 60
             periodSeconds: 20
             timeoutSeconds: 5
             failureThreshold: 5
@@ -44,7 +44,7 @@ spec:
             httpGet:
               path: /health
               port: 8000
-            initialDelaySeconds: 15
+            initialDelaySeconds: 30
             periodSeconds: 10
             timeoutSeconds: 3
             failureThreshold: 3
