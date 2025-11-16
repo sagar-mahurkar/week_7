@@ -100,8 +100,9 @@ jobs:
       # 12. Create Kubernetes service account
       - name: Create Kubernetes service account
         run: |
-          if ! kubectl get serviceaccount "${SERVICE_ACCOUNT_NAME}" -n "${NAMESPACE}" >/dev/null 2>&1; then
-            kubectl create serviceaccount "${SERVICE_ACCOUNT_NAME}" -n "${NAMESPACE}"
+          if ! kubectl get serviceaccount "$SERVICE_ACCOUNT_NAME" -n "$NAMESPACE" >/dev/null 2>&1; then
+            kubectl create serviceaccount "$SERVICE_ACCOUNT_NAME" -n "$NAMESPACE"
+          fi
 
       # 13. Annotate Kubernetes service account for Workload Identity
       - name: Annotate Kubernetes service account
