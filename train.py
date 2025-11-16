@@ -1,106 +1,120 @@
 # train.py
-
-# import important modules
 import os
-import sys
-import pandas as pd
-import requests
-
-# Imports for the new model and data source
-from sklearn.model_selection import train_test_split, GridSearchCV
-from sklearn.ensemble import RandomForestClassifier # Changed from DecisionTree
 import mlflow
+import joblib
+import pandas as pd
+from mlflow.tracking import MlflowClient
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.ensemble import RandomForestClassifier
 
-# --- Configuration ---
+
+# --------------------------------------------------------------
+# Configuration
+# --------------------------------------------------------------
 MLFLOW_TRACKING_URI = "http://34.63.106.86:5000/"
-MODEL_NAME = "iris-random-forest" # Updated model name
-RUN_NAME = "Random Forest Hyperparameter Search" # Updated run name
+MODEL_NAME = "iris-random-forest"
+RUN_NAME = "Random Forest Hyperparameter Search"
 
+LOCAL_MODEL_DIR = "artifacts"
+LOCAL_MODEL_PATH = os.path.join(LOCAL_MODEL_DIR, "random_forest_model.pkl")
+
+os.makedirs(LOCAL_MODEL_DIR, exist_ok=True)
+
+
+# --------------------------------------------------------------
+# Data Preparation
+# --------------------------------------------------------------
 def prepare_data():
-    """Loads the Iris dataset into memory and performs the train/test split."""
-    print("Preparing data...")
-    # load the data
-    data = pd.read_csv('./data.csv')
-    data = pd.DataFrame(data, columns=['sepal_length','sepal_width','petal_length','petal_width', 'species'])
-
-    # Split the data
-    train, test = train_test_split(
-        data, test_size=0.2, stratify=data['species'], random_state=42
-    )
-    
-    # Define features and target
-    feature_cols = ['sepal_length','sepal_width','petal_length','petal_width']
-    X_train, y_train = train[feature_cols], train['species']
-    X_test, y_test = test[feature_cols], test['species']
-    
-    print("Data split complete.")
-    return X_train, y_train, X_test, y_test
-    
-def tune_random_forest(X_train, y_train, X_test, y_test):
-    """
-    Sets up MLflow, runs GridSearchCV for RandomForestClassifier,
-    and manually logs the best results and the model.
-    """
-    print(f"Starting MLflow logging to: {MLFLOW_TRACKING_URI}")
-    mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
-    
-    # NOTE: Autologging is disabled, parameters, metrics, and model are logged manually.
-    # mlflow.sklearn.autolog(max_tuning_runs=10, registered_model_name=MODEL_NAME)
-    
-    # Updated parameter grid for Random Forest (includes n_estimators)
-    rf_param_grid = {
-        'n_estimators': [50, 100, 200], # Added RF-specific parameter
-        'criterion': ['gini', 'entropy'],
-        'max_depth': [None, 5, 10, 15],
-        'min_samples_split': [3, 5, 10], # Slightly different list than original
-        'class_weight': [None, 'balanced']
-    }
-    
-    with mlflow.start_run(run_name=RUN_NAME):
-        # Initialize RandomForestClassifier
-        rf_model = RandomForestClassifier(random_state=42)
-        
-        # Setup Grid Search
-        rf_grid_search = GridSearchCV(
-            rf_model, rf_param_grid, cv=5, scoring="accuracy", n_jobs=-1, verbose=2
-        )
-
-        print("Executing hyperparameter search...")
-        rf_grid_search.fit(X_train, y_train)
-        
-        # Get results
-        best_score_cv = rf_grid_search.best_score_
-        test_score = rf_grid_search.score(X_test, y_test)
-        
-        print("\n--- Tuning Results ---")
-        print(f"Best parameters: {rf_grid_search.best_params_}")
-        print(f"Best cross-validation score: {best_score_cv:.4f}")
-        print(f"Test set accuracy: {test_score:.4f}")
-        
-        # --- Manual MLflow Logging ---
-        
-        # 1. Log the best parameters found by GridSearchCV
-        mlflow.log_params(rf_grid_search.best_params_)
-        
-        # 2. Log the final metrics
-        mlflow.log_metric("best_cv_accuracy", best_score_cv)
-        mlflow.log_metric("final_test_accuracy", test_score)
-        
-        # 3. Log the best model estimator
-        mlflow.sklearn.log_model(
-            rf_grid_search.best_estimator_, 
-            "random_forest_model", 
-            registered_model_name=MODEL_NAME
-        )
-        # -----------------------------
-    print("MLflow run finished.")
-    
-    
-if __name__ == "__main__":
+    """Load and split the Iris dataset."""
     try:
-        X_train, y_train, X_test, y_test = prepare_data()
-        tune_random_forest(X_train, y_train, X_test, y_test)
+        data = pd.read_csv("./data.csv")
+        data = data[["sepal_length", "sepal_width", "petal_length", "petal_width", "species"]]
+
+        train, test = train_test_split(
+            data, test_size=0.2, stratify=data["species"], random_state=42
+        )
+
+        X_train = train.drop(columns=["species"])
+        y_train = train["species"]
+        X_test = test.drop(columns=["species"])
+        y_test = test["species"]
+
+        return X_train, y_train, X_test, y_test
+
     except Exception as e:
-        print(f"An unexpected error occurred during execution: {e}")
-        sys.exit(1)
+        raise RuntimeError(f"Error preparing data: {e}")
+
+
+# --------------------------------------------------------------
+# Train + Hyperparameter Tune + Log to MLflow
+# --------------------------------------------------------------
+def tune_random_forest(X_train, y_train, X_test, y_test):
+    """Train and tune a RandomForest model, log to MLflow registry."""
+    try:
+        mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+        client = MlflowClient()
+
+        param_grid = {
+            "n_estimators": [50, 100],
+            "criterion": ["gini", "entropy"],
+            "max_depth": [None, 5, 10],
+            "min_samples_split": [2, 5],
+        }
+
+        with mlflow.start_run(run_name=RUN_NAME):
+            model = RandomForestClassifier(random_state=42)
+
+            grid = GridSearchCV(
+                model,
+                param_grid,
+                cv=5,
+                scoring="accuracy",
+                n_jobs=-1,
+                verbose=1,
+            )
+
+            grid.fit(X_train, y_train)
+
+            best_model = grid.best_estimator_
+
+            # Log params & metrics
+            mlflow.log_params(grid.best_params_)
+            mlflow.log_metric("cv_accuracy", grid.best_score_)
+            mlflow.log_metric("test_accuracy", best_model.score(X_test, y_test))
+
+            # Log model to MLflow Registry (fast — NO downloads)
+            mlflow.sklearn.log_model(
+                sk_model=best_model,
+                artifact_path="model",
+                registered_model_name=MODEL_NAME,
+            )
+
+            # Save locally for FastAPI inference cache
+            joblib.dump(best_model, LOCAL_MODEL_PATH)
+
+            return {
+                "best_params": grid.best_params_,
+                "cv_accuracy": grid.best_score_,
+                "test_accuracy": best_model.score(X_test, y_test),
+                "local_model_path": LOCAL_MODEL_PATH,
+            }
+
+    except Exception as e:
+        raise RuntimeError(f"Error during training: {e}")
+
+
+# --------------------------------------------------------------
+# Main Entry
+# --------------------------------------------------------------
+def main():
+    print("\n🚀 Starting Model Training...")
+    X_train, y_train, X_test, y_test = prepare_data()
+    result = tune_random_forest(X_train, y_train, X_test, y_test)
+    print("\n✅ Training Complete!")
+    print(result)
+
+
+if __name__ == "__main__":
+    main()
+
         
