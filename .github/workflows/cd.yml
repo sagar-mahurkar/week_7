@@ -90,6 +90,8 @@ jobs:
         run: |
           if ! kubectl get serviceaccount "$SERVICE_ACCOUNT_NAME" -n "$NAMESPACE" >/dev/null 2>&1; then
             kubectl create serviceaccount "$SERVICE_ACCOUNT_NAME" -n "$NAMESPACE"
+          fi
+
 
       # 12. Annotate Kubernetes service account for Workload Identity
       - name: Annotate Kubernetes service account
