@@ -16,7 +16,6 @@ env:
   DEPLOYMENT_NAME: iris-workload-deployment
   NAMESPACE: default
   SERVICE_ACCOUNT_NAME: telemetry-access
-  CML_REPORT_FILE: cml_reports/deployment_report.md
 
 jobs:
   deploy:
@@ -33,27 +32,24 @@ jobs:
         with:
           python-version: "3.9"
 
-      # 3. Setup CML for report generation
-      - uses: iterative/setup-cml@v2
-
-      # 4. Authenticate to Google Cloud
+      # 3. Authenticate to Google Cloud
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_CREDENTIALS_JSON }}
 
-      # 5. Setup gcloud CLI
+      # 4. Setup gcloud CLI
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ env.PROJECT_ID }}
           export_default_credentials: true
 
-      # 6. Install GKE auth plugin
+      # 5. Install GKE auth plugin
       - name: Install GKE Auth Plugin
         run: gcloud components install gke-gcloud-auth-plugin --quiet
 
-      # 7. Ensure GAR repository exists
+      # 6. Ensure GAR repository exists
       - name: Ensure GAR repository exists
         run: |
           if ! gcloud artifacts repositories describe "${REPOSITORY}" --location="${GAR_LOCATION}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
@@ -64,23 +60,23 @@ jobs:
               --project="${PROJECT_ID}"
           fi
 
-      # 8. Configure Docker for GAR
+      # 7. Configure Docker for GAR
       - name: Configure Docker
         run: gcloud auth configure-docker "${GAR_LOCATION}-docker.pkg.dev" --quiet
 
-      # 9. Build Docker image
+      # 8. Build Docker image
       - name: Build Docker Image
         run: |
           IMAGE_URI="${GAR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE}:latest"
           docker build -t "$IMAGE_URI" .
 
-      # 10. Push Docker image to GAR
+      # 9. Push Docker image to GAR
       - name: Push Docker Image
         run: |
           IMAGE_URI="${GAR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE}:latest"
           docker push "$IMAGE_URI"
 
-      # 11. Get GKE cluster credentials
+      # 10. Get GKE cluster credentials
       - name: Fetch GKE Credentials
         run: |
           if ! gcloud container clusters get-credentials "${CLUSTER_NAME}" --region "${CLUSTER_LOCATION}" --project "${PROJECT_ID}"; then
@@ -88,14 +84,14 @@ jobs:
           fi
           kubectl config current-context
 
-      # 12. Create Kubernetes service account
+      # 11. Create Kubernetes service account
       - name: Create Kubernetes service account
         run: |
           if ! kubectl get serviceaccount "$SERVICE_ACCOUNT_NAME" -n "$NAMESPACE" >/dev/null 2>&1; then
             kubectl create serviceaccount "$SERVICE_ACCOUNT_NAME" -n "$NAMESPACE"
           fi
 
-      # 13. Annotate Kubernetes service account for Workload Identity
+      # 12. Annotate Kubernetes service account for Workload Identity
       - name: Annotate Kubernetes service account
         run: |
           kubectl annotate serviceaccount "${SERVICE_ACCOUNT_NAME}" \
@@ -105,48 +101,14 @@ jobs:
             --role=roles/iam.workloadIdentityUser \
             --member="serviceAccount:${PROJECT_ID}.svc.id.goog[${NAMESPACE}/${SERVICE_ACCOUNT_NAME}]"
 
-      # 14. Apply Kubernetes manifests
+      # 13. Apply Kubernetes manifests
       - name: Apply Kubernetes manifests
         run: kubectl apply -f k8s/ -n "${NAMESPACE}"
 
-      # 15. Update deployment image (Rolling Update)
+      # 14. Update deployment image (Rolling Update)
       - name: Update Deployment Image
         run: |
           IMAGE_URI="${GAR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE}:latest"
           CONTAINER_NAME=$(kubectl get deployment "${DEPLOYMENT_NAME}" -n "${NAMESPACE}" -o jsonpath='{.spec.template.spec.containers[0].name}')
           kubectl set image deployment/${DEPLOYMENT_NAME} ${CONTAINER_NAME}=$IMAGE_URI -n "${NAMESPACE}"
           kubectl rollout status deployment/${DEPLOYMENT_NAME} -n "${NAMESPACE}" --timeout=5m
-
-      # 16. Generate CML report (CI/CD only)
-      - name: Generate CML report
-        run: |
-          mkdir -p cml_reports
-          echo "## Pods Status" > $CML_REPORT_FILE
-          
-          # Wait until all pods are READY (max 5 minutes)
-          for i in {1..30}; do
-            NOT_READY=$(kubectl get pods -n "${NAMESPACE}" -l app=${DEPLOYMENT_NAME} \
-              -o jsonpath='{.items[?(@.status.containerStatuses[0].ready==false)].metadata.name}')
-            if [ -z "$NOT_READY" ]; then
-              echo "✅ All pods are ready."
-              break
-            else
-              echo "Waiting for pods: $NOT_READY"
-              sleep 10
-            fi
-          done
-          kubectl get pods -n "${NAMESPACE}" -o wide >> $CML_REPORT_FILE
-
-          echo -e "\n## Service Info" >> $CML_REPORT_FILE
-          kubectl get service -n "${NAMESPACE}" >> $CML_REPORT_FILE
-
-          echo -e "\n## Performance Test" >> $CML_REPORT_FILE
-          sudo apt-get update && sudo apt-get install -y wrk
-          EXTERNAL_IP=$(kubectl get service iris-workload-deployment-service -n "${NAMESPACE}" -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-          echo "Testing external IP: $EXTERNAL_IP"
-          wrk -t4 -c100 -d10 --latency -s scripts/post.lua http://$EXTERNAL_IP:80/predict >> $CML_REPORT_FILE || echo "Performance test failed"
-
-      # 17. Publish CML report as PR comment (no REPO_TOKEN)
-      - name: Publish CML report
-        run: |
-          cml comment create --publish $CML_REPORT_FILE
