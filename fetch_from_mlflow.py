@@ -6,14 +6,15 @@ from mlflow.exceptions import MlflowException
 
 URI = "http://34.59.234.84:5000/"
 NAME = "iris-random-forest"
-SAVE_LOCAL = "downloaded_models/model.pkl"
+DOWNLOAD_DIR = "downloaded_models"
+LOCAL_MODEL_PATH = os.path.join(DOWNLOAD_DIR, "model.pkl")
 
-os.makedirs("downloaded_models", exist_ok=True)
+os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 
 def fetch(client, name):
     """
-    Fetch the latest registered model version (fast metadata only).
+    Fetch the latest registered model version from the MLflow Model Registry.
     """
     print(f"Searching for latest registered model: {name}")
 
@@ -23,39 +24,40 @@ def fetch(client, name):
             order_by=["version_number DESC"],
             max_results=1
         )
-        
+
         if not versions:
             print(f"[ERROR] No versions found for model '{name}'.")
             return None
 
         latest = versions[0]
-        print(f"[INFO] Latest Version: v{latest.version}, Stage: {latest.current_stage}, Run ID: {latest.run_id}")
+        print(
+            f"[INFO] Latest Version: v{latest.version}, "
+            f"Stage: {latest.current_stage}, Run ID: {latest.run_id}"
+        )
         return latest
 
     except Exception as e:
-        print(f"[ERROR] While fetching model metadata: {e}")
+        print(f"[ERROR] While fetching metadata: {e}")
         return None
 
 
 def load_model(version):
     """
-    Load model directly from MLflow Model Registry instead of using artifact downloads.
-    This avoids the slow /mlflow-artifacts endpoint entirely.
+    Load model directly from MLflow Model Registry.
     """
     if not version:
-        print("[ERROR] Cannot load model — version metadata missing.")
+        print("[ERROR] Cannot load – model version metadata missing.")
         return None
 
     try:
         model_uri = f"models:/{NAME}/{version.version}"
         print(f"[INFO] Loading model from Registry URI: {model_uri}")
 
+        # Load the model for inference
         model = mlflow.pyfunc.load_model(model_uri)
 
-        # Optional: Save locally
-        mlflow.pyfunc.save_model(model_uri=model_uri, path="downloaded_models")
+        print("[INFO] Model loaded successfully.")
 
-        print(f"[INFO] Model loaded and saved locally to: {SAVE_LOCAL}")
         return model
 
     except MlflowException as e:
@@ -64,6 +66,31 @@ def load_model(version):
 
     except Exception as e:
         print(f"[ERROR] Failed to load model: {e}")
+        return None
+
+
+def download_artifacts(version):
+    """
+    Download underlying model artifacts (optional).
+    """
+    if not version:
+        print("[ERROR] Cannot download artifacts – version missing.")
+        return None
+
+    try:
+        artifact_uri = f"models:/{NAME}/{version.version}"
+        print(f"[INFO] Downloading artifacts from: {artifact_uri}")
+
+        downloaded_path = mlflow.artifacts.download_artifacts(
+            artifact_uri=artifact_uri,
+            dst_path=DOWNLOAD_DIR
+        )
+
+        print(f"[INFO] Artifacts downloaded to: {downloaded_path}")
+        return downloaded_path
+
+    except Exception as e:
+        print(f"[ERROR] Failed to download artifacts: {e}")
         return None
 
 
@@ -76,7 +103,8 @@ def main():
     version = fetch(client, NAME)
 
     if version:
-        load_model(version)
+        model = load_model(version)
+        download_artifacts(version)
 
 
 if __name__ == "__main__":
