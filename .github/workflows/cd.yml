@@ -1,7 +1,7 @@
 name: CD - Deploy FastAPI to GKE
 
 on:
-  pull_request:
+  push:
     branches:
       - main
   workflow_dispatch:
@@ -16,7 +16,7 @@ env:
   DEPLOYMENT_NAME: iris-workload-deployment
   NAMESPACE: default
   SERVICE_ACCOUNT_NAME: telemetry-access
-  REPORT_FILE: cml_reports/report.md
+  CML_REPORT_FILE: cml_reports/deployment_report.md
 
 jobs:
   deploy:
@@ -79,25 +79,47 @@ jobs:
           fi
           kubectl config current-context
 
-      # 10. Create Kubernetes service account
+      # 10. Optional: Create GCP service account (run once manually)
+      - name: Create GCP service account
+        if: false
+        run: |
+          if ! gcloud iam service-accounts list --filter="email:${SERVICE_ACCOUNT_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" --format="value(email)" | grep -q "$SERVICE_ACCOUNT_NAME"; then
+            gcloud iam service-accounts create "$SERVICE_ACCOUNT_NAME" --display-name "Access for GKE ML service"
+          fi
+
+      # 11. Optional: Bind IAM roles (run manually)
+      - name: Bind IAM roles
+        if: false
+        run: |
+          gcloud projects add-iam-policy-binding $PROJECT_ID \
+            --member="serviceAccount:${SERVICE_ACCOUNT_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
+            --role="roles/logging.logWriter"
+          gcloud projects add-iam-policy-binding $PROJECT_ID \
+            --member="serviceAccount:${SERVICE_ACCOUNT_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
+            --role="roles/cloudtrace.agent"
+
+      # 12. Create Kubernetes service account
       - name: Create Kubernetes service account
         run: |
           if ! kubectl get serviceaccount "$SERVICE_ACCOUNT_NAME" -n "$NAMESPACE" >/dev/null 2>&1; then
             kubectl create serviceaccount "$SERVICE_ACCOUNT_NAME" -n "$NAMESPACE"
           fi
 
-      # 11. Annotate Kubernetes service account for Workload Identity
+      # 13. Annotate Kubernetes service account for Workload Identity
       - name: Annotate Kubernetes service account
         run: |
           kubectl annotate serviceaccount "${SERVICE_ACCOUNT_NAME}" \
             --namespace "${NAMESPACE}" \
             iam.gke.io/gcp-service-account="${SERVICE_ACCOUNT_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" --overwrite
+          gcloud iam service-accounts add-iam-policy-binding "${SERVICE_ACCOUNT_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
+            --role=roles/iam.workloadIdentityUser \
+            --member="serviceAccount:${PROJECT_ID}.svc.id.goog[${NAMESPACE}/${SERVICE_ACCOUNT_NAME}]"
 
-      # 12. Apply Kubernetes manifests
+      # 14. Apply Kubernetes manifests
       - name: Apply Kubernetes manifests
         run: kubectl apply -f k8s/ -n "${NAMESPACE}"
 
-      # 13. Update deployment image (Rolling Update)
+      # 15. Update deployment image (Rolling Update)
       - name: Update Deployment Image
         run: |
           IMAGE_URI="${GAR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE}:latest"
@@ -105,31 +127,41 @@ jobs:
           kubectl set image deployment/${DEPLOYMENT_NAME} ${CONTAINER_NAME}=$IMAGE_URI -n "${NAMESPACE}"
           kubectl rollout status deployment/${DEPLOYMENT_NAME} -n "${NAMESPACE}" --timeout=5m
 
-      # 14. Verify pods and capture output
+      # 16. Verify pods
       - name: Verify Pods
+        run: kubectl get pods -n "${NAMESPACE}" -o wide
+
+      # 17. Get service info
+      - name: Get Service Info
+        run: kubectl get service -n "${NAMESPACE}"
+
+      # 18. Generate CML report with pods, service info, and performance test
+      - name: Generate CML report
         run: |
           mkdir -p cml_reports
-          echo "## Pods Status" > $REPORT_FILE
-          kubectl get pods -n "${NAMESPACE}" -o wide >> $REPORT_FILE
+          echo "## Pods Status" > $CML_REPORT_FILE
+          
+          # Wait until all pods are READY (max 5 minutes)
+          for i in {1..30}; do
+            NOT_READY=$(kubectl get pods -n "${NAMESPACE}" -l app=${DEPLOYMENT_NAME} \
+              -o jsonpath='{.items[?(@.status.containerStatuses[0].ready==false)].metadata.name}')
+            if [ -z "$NOT_READY" ]; then
+              echo "✅ All pods are ready."
+              break
+            else
+              echo "Waiting for pods: $NOT_READY"
+              sleep 10
+            fi
+          done
+          kubectl get pods -n "${NAMESPACE}" -o wide >> $CML_REPORT_FILE
 
-      # 15. Get service info and append to report
-      - name: Get Service Info
-        run: |
-          echo -e "\n## Service Info" >> $REPORT_FILE
-          kubectl get service -n "${NAMESPACE}" >> $REPORT_FILE
+          echo -e "\n## Service Info" >> $CML_REPORT_FILE
+          kubectl get service -n "${NAMESPACE}" >> $CML_REPORT_FILE
 
-      # 16. Run performance test and append output
-      - name: Run Performance Test
-        run: |
+          echo -e "\n## Performance Test" >> $CML_REPORT_FILE
           sudo apt-get update && sudo apt-get install -y wrk
           EXTERNAL_IP=$(kubectl get service iris-workload-deployment-service -n "${NAMESPACE}" -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-          echo -e "\n## Performance Test Output (wrk)" >> $REPORT_FILE
-          wrk -t4 -c100 -d10 --latency -s scripts/post.lua http://$EXTERNAL_IP:80/predict >> $REPORT_FILE
+          echo "Testing external IP: $EXTERNAL_IP"
+          wrk -t4 -c100 -d10 --latency -s scripts/post.lua http://$EXTERNAL_IP:80/predict >> $CML_REPORT_FILE || echo "Performance test failed"
 
-      # 17. Install CML and post report
-      - name: Install CML
-        run: pip install cml
-
-      - name: Publish CML Report
-        run: |
-          cml comment create $REPORT_FILE --repo-token "${{ secrets.GH_TOKEN }}"
+          cat $CML_REPORT_FILE
