@@ -18,9 +18,6 @@ env:
   SERVICE_ACCOUNT_NAME: telemetry-access
   CML_REPORT_FILE: cml_reports/deployment_report.md
 
-permissions:
-  contents: write  # required for CML to post comments
-
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -30,24 +27,34 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 2. Authenticate to Google Cloud
+      # 2. Setup Python 3.11 for iterative-cml
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.11
+
+      # 3. Install iterative-cml
+      - name: Install CML
+        run: pip install --user iterative-cml
+
+      # 4. Authenticate to Google Cloud
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_CREDENTIALS_JSON }}
 
-      # 3. Setup gcloud
+      # 5. Setup gcloud
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ env.PROJECT_ID }}
           export_default_credentials: true
 
-      # 4. Install GKE auth plugin
+      # 6. Install GKE auth plugin
       - name: Install GKE Auth Plugin
         run: gcloud components install gke-gcloud-auth-plugin --quiet
 
-      # 5. Ensure GAR repository exists
+      # 7. Ensure GAR repository exists
       - name: Ensure GAR repository exists
         run: |
           if ! gcloud artifacts repositories describe "${REPOSITORY}" --location="${GAR_LOCATION}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
@@ -58,23 +65,23 @@ jobs:
               --project="${PROJECT_ID}"
           fi
 
-      # 6. Configure Docker for GAR
+      # 8. Configure Docker for GAR
       - name: Configure Docker
         run: gcloud auth configure-docker "${GAR_LOCATION}-docker.pkg.dev" --quiet
 
-      # 7. Build Docker image
+      # 9. Build Docker image
       - name: Build Docker Image
         run: |
           IMAGE_URI="${GAR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE}:latest"
           docker build -t "$IMAGE_URI" .
 
-      # 8. Push Docker image to GAR
+      # 10. Push Docker image to GAR
       - name: Push Docker Image
         run: |
           IMAGE_URI="${GAR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE}:latest"
           docker push "$IMAGE_URI"
 
-      # 9. Get GKE cluster credentials
+      # 11. Get GKE cluster credentials
       - name: Fetch GKE Credentials
         run: |
           if ! gcloud container clusters get-credentials "${CLUSTER_NAME}" --region "${CLUSTER_LOCATION}" --project "${PROJECT_ID}"; then
@@ -82,14 +89,14 @@ jobs:
           fi
           kubectl config current-context
 
-      # 10. Create Kubernetes service account
+      # 12. Create Kubernetes service account
       - name: Create Kubernetes service account
         run: |
           if ! kubectl get serviceaccount "$SERVICE_ACCOUNT_NAME" -n "$NAMESPACE" >/dev/null 2>&1; then
             kubectl create serviceaccount "$SERVICE_ACCOUNT_NAME" -n "$NAMESPACE"
           fi
 
-      # 11. Annotate Kubernetes service account for Workload Identity
+      # 13. Annotate Kubernetes service account for Workload Identity
       - name: Annotate Kubernetes service account
         run: |
           kubectl annotate serviceaccount "${SERVICE_ACCOUNT_NAME}" \
@@ -99,11 +106,11 @@ jobs:
             --role=roles/iam.workloadIdentityUser \
             --member="serviceAccount:${PROJECT_ID}.svc.id.goog[${NAMESPACE}/${SERVICE_ACCOUNT_NAME}]"
 
-      # 12. Apply Kubernetes manifests
+      # 14. Apply Kubernetes manifests
       - name: Apply Kubernetes manifests
         run: kubectl apply -f k8s/ -n "${NAMESPACE}"
 
-      # 13. Update deployment image (Rolling Update)
+      # 15. Update deployment image (Rolling Update)
       - name: Update Deployment Image
         run: |
           IMAGE_URI="${GAR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE}:latest"
@@ -111,14 +118,13 @@ jobs:
           kubectl set image deployment/${DEPLOYMENT_NAME} ${CONTAINER_NAME}=$IMAGE_URI -n "${NAMESPACE}"
           kubectl rollout status deployment/${DEPLOYMENT_NAME} -n "${NAMESPACE}" --timeout=5m
 
-      # 14. Generate CML report
+      # 16. Generate CML report (Pods, Service Info, Performance)
       - name: Generate CML report
         run: |
-          pip install iterative-cml
           mkdir -p cml_reports
           echo "## Pods Status" > $CML_REPORT_FILE
           
-          # Wait until all pods are READY (max 5 minutes)
+          # Wait until all pods are READY
           for i in {1..30}; do
             NOT_READY=$(kubectl get pods -n "${NAMESPACE}" -l app=${DEPLOYMENT_NAME} \
               -o jsonpath='{.items[?(@.status.containerStatuses[0].ready==false)].metadata.name}')
@@ -141,11 +147,5 @@ jobs:
           echo "Testing external IP: $EXTERNAL_IP"
           wrk -t4 -c100 -d10 --latency -s scripts/post.lua http://$EXTERNAL_IP:80/predict >> $CML_REPORT_FILE || echo "Performance test failed"
 
+          # Show report in logs
           cat $CML_REPORT_FILE
-
-      # 15. Publish CML report as GitHub comment
-      - name: Publish CML report
-        run: |
-          cml-send-comment $CML_REPORT_FILE
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
