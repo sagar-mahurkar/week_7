@@ -8,7 +8,7 @@ from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.ensemble import RandomForestClassifier
 
 # -------------------------- Configuration --------------------------
-MLFLOW_TRACKING_URI = "http://34.170.88.52:5000"
+MLFLOW_TRACKING_URI = "http://34.122.49.196:5000"
 MODEL_NAME = "iris-random-forest"
 RUN_NAME = "Random Forest Hyperparameter Search"
 
