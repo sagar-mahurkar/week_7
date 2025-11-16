@@ -7,11 +7,8 @@ from mlflow.tracking import MlflowClient
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.ensemble import RandomForestClassifier
 
-# --------------------------------------------------------------
-# Configuration
-# --------------------------------------------------------------
-# Use env var, fallback to local MLflow server
-MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://127.0.0.1:5000/")
+# -------------------------- Configuration --------------------------
+MLFLOW_TRACKING_URI = os.environ.get("MLFLOW_TRACKING_URI", "http://127.0.0.1:5000")
 MODEL_NAME = "iris-random-forest"
 RUN_NAME = "Random Forest Hyperparameter Search"
 
@@ -19,9 +16,7 @@ LOCAL_MODEL_DIR = "artifacts"
 LOCAL_MODEL_PATH = os.path.join(LOCAL_MODEL_DIR, "random_forest_model.pkl")
 os.makedirs(LOCAL_MODEL_DIR, exist_ok=True)
 
-# --------------------------------------------------------------
-# Data Preparation
-# --------------------------------------------------------------
+# -------------------------- Data Preparation --------------------------
 def prepare_data():
     """Load and split the Iris dataset."""
     try:
@@ -42,9 +37,7 @@ def prepare_data():
     except Exception as e:
         raise RuntimeError(f"Error preparing data: {e}")
 
-# --------------------------------------------------------------
-# Train + Hyperparameter Tune + Log to MLflow
-# --------------------------------------------------------------
+# -------------------------- Training & Hyperparameter Tuning --------------------------
 def tune_random_forest(X_train, y_train, X_test, y_test):
     """Train and tune a RandomForest model, log to MLflow registry."""
     try:
@@ -60,7 +53,6 @@ def tune_random_forest(X_train, y_train, X_test, y_test):
 
         with mlflow.start_run(run_name=RUN_NAME):
             model = RandomForestClassifier(random_state=42)
-
             grid = GridSearchCV(
                 model,
                 param_grid,
@@ -69,9 +61,7 @@ def tune_random_forest(X_train, y_train, X_test, y_test):
                 n_jobs=-1,
                 verbose=1,
             )
-
             grid.fit(X_train, y_train)
-
             best_model = grid.best_estimator_
 
             # Log params & metrics
@@ -86,7 +76,7 @@ def tune_random_forest(X_train, y_train, X_test, y_test):
                 registered_model_name=MODEL_NAME,
             )
 
-            # Save locally for inference cache
+            # Save locally
             joblib.dump(best_model, LOCAL_MODEL_PATH)
 
             return {
@@ -99,9 +89,7 @@ def tune_random_forest(X_train, y_train, X_test, y_test):
     except Exception as e:
         raise RuntimeError(f"Error during training: {e}")
 
-# --------------------------------------------------------------
-# Main Entry
-# --------------------------------------------------------------
+# -------------------------- Main Entry --------------------------
 def main():
     print("\n🚀 Starting Model Training...")
     X_train, y_train, X_test, y_test = prepare_data()
