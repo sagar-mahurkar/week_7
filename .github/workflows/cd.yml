@@ -181,4 +181,3 @@ EOF
 
           # Run wrk performance test
           wrk -t4 -c2000 -d60 --latency -s scripts/post.lua http://$EXTERNAL_IP:80/predict || echo "Single pod performance test failed"
-
