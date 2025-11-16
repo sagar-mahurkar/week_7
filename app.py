@@ -21,7 +21,7 @@ from sklearn.model_selection import GridSearchCV
 # --------------------------------------------------------------
 # Configuration
 # --------------------------------------------------------------
-MLFLOW_TRACKING_URI = "http://34.173.23.187:5000/"   # MLflow tracking server
+MLFLOW_TRACKING_URI = "http://34.59.234.84:5000/"   # MLflow tracking server
 MODEL_NAME = "iris-random-forest"                    # Registered model name
 RUN_NAME = "Random Forest Hyperparameter Search"     # Run name
 
