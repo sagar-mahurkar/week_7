@@ -11,7 +11,7 @@ from sklearn.ensemble import RandomForestClassifier
 # --------------------------------------------------------------
 # Configuration
 # --------------------------------------------------------------
-MLFLOW_TRACKING_URI = "http://34.63.106.86:5000/"
+MLFLOW_TRACKING_URI = "http://34.59.234.84:5000/"
 MODEL_NAME = "iris-random-forest"
 RUN_NAME = "Random Forest Hyperparameter Search"
 
