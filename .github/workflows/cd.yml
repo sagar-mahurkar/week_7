@@ -18,6 +18,9 @@ env:
   SERVICE_ACCOUNT_NAME: telemetry-access
   CML_REPORT_FILE: cml_reports/deployment_report.md
 
+permissions:
+  contents: write  # required for CML to post comments
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -79,33 +82,14 @@ jobs:
           fi
           kubectl config current-context
 
-      # 10. Optional: Create GCP service account (run once manually)
-      - name: Create GCP service account
-        if: false
-        run: |
-          if ! gcloud iam service-accounts list --filter="email:${SERVICE_ACCOUNT_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" --format="value(email)" | grep -q "$SERVICE_ACCOUNT_NAME"; then
-            gcloud iam service-accounts create "$SERVICE_ACCOUNT_NAME" --display-name "Access for GKE ML service"
-          fi
-
-      # 11. Optional: Bind IAM roles (run manually)
-      - name: Bind IAM roles
-        if: false
-        run: |
-          gcloud projects add-iam-policy-binding $PROJECT_ID \
-            --member="serviceAccount:${SERVICE_ACCOUNT_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
-            --role="roles/logging.logWriter"
-          gcloud projects add-iam-policy-binding $PROJECT_ID \
-            --member="serviceAccount:${SERVICE_ACCOUNT_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
-            --role="roles/cloudtrace.agent"
-
-      # 12. Create Kubernetes service account
+      # 10. Create Kubernetes service account
       - name: Create Kubernetes service account
         run: |
           if ! kubectl get serviceaccount "$SERVICE_ACCOUNT_NAME" -n "$NAMESPACE" >/dev/null 2>&1; then
             kubectl create serviceaccount "$SERVICE_ACCOUNT_NAME" -n "$NAMESPACE"
           fi
 
-      # 13. Annotate Kubernetes service account for Workload Identity
+      # 11. Annotate Kubernetes service account for Workload Identity
       - name: Annotate Kubernetes service account
         run: |
           kubectl annotate serviceaccount "${SERVICE_ACCOUNT_NAME}" \
@@ -115,11 +99,11 @@ jobs:
             --role=roles/iam.workloadIdentityUser \
             --member="serviceAccount:${PROJECT_ID}.svc.id.goog[${NAMESPACE}/${SERVICE_ACCOUNT_NAME}]"
 
-      # 14. Apply Kubernetes manifests
+      # 12. Apply Kubernetes manifests
       - name: Apply Kubernetes manifests
         run: kubectl apply -f k8s/ -n "${NAMESPACE}"
 
-      # 15. Update deployment image (Rolling Update)
+      # 13. Update deployment image (Rolling Update)
       - name: Update Deployment Image
         run: |
           IMAGE_URI="${GAR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE}:latest"
@@ -127,17 +111,10 @@ jobs:
           kubectl set image deployment/${DEPLOYMENT_NAME} ${CONTAINER_NAME}=$IMAGE_URI -n "${NAMESPACE}"
           kubectl rollout status deployment/${DEPLOYMENT_NAME} -n "${NAMESPACE}" --timeout=5m
 
-      # 16. Verify pods
-      - name: Verify Pods
-        run: kubectl get pods -n "${NAMESPACE}" -o wide
-
-      # 17. Get service info
-      - name: Get Service Info
-        run: kubectl get service -n "${NAMESPACE}"
-
-      # 18. Generate CML report with pods, service info, and performance test
+      # 14. Generate CML report
       - name: Generate CML report
         run: |
+          pip install iterative-cml
           mkdir -p cml_reports
           echo "## Pods Status" > $CML_REPORT_FILE
           
@@ -165,3 +142,10 @@ jobs:
           wrk -t4 -c100 -d10 --latency -s scripts/post.lua http://$EXTERNAL_IP:80/predict >> $CML_REPORT_FILE || echo "Performance test failed"
 
           cat $CML_REPORT_FILE
+
+      # 15. Publish CML report as GitHub comment
+      - name: Publish CML report
+        run: |
+          cml-send-comment $CML_REPORT_FILE
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
