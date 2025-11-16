@@ -4,18 +4,18 @@ import mlflow
 from mlflow.tracking import MlflowClient
 from mlflow.exceptions import MlflowException
 
-URI = "http://34.59.234.84:5000/"
-NAME = "iris-random-forest"
+# --------------------------
+# Config
+# --------------------------
+# Use env var, fallback to local MLflow server
+MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://127.0.0.1:5000/")
+MODEL_NAME = "iris-random-forest"
 DOWNLOAD_DIR = "downloaded_models"
 LOCAL_MODEL_PATH = os.path.join(DOWNLOAD_DIR, "model.pkl")
-
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-
 def fetch(client, name):
-    """
-    Fetch the latest registered model version from the MLflow Model Registry.
-    """
+    """Fetch the latest registered model version from the MLflow Model Registry."""
     print(f"Searching for latest registered model: {name}")
 
     try:
@@ -40,45 +40,34 @@ def fetch(client, name):
         print(f"[ERROR] While fetching metadata: {e}")
         return None
 
-
 def load_model(version):
-    """
-    Load model directly from MLflow Model Registry.
-    """
+    """Load model directly from MLflow Model Registry."""
     if not version:
         print("[ERROR] Cannot load – model version metadata missing.")
         return None
 
     try:
-        model_uri = f"models:/{NAME}/{version.version}"
+        model_uri = f"models:/{MODEL_NAME}/{version.version}"
         print(f"[INFO] Loading model from Registry URI: {model_uri}")
-
-        # Load the model for inference
         model = mlflow.pyfunc.load_model(model_uri)
-
         print("[INFO] Model loaded successfully.")
-
         return model
 
     except MlflowException as e:
         print(f"[MLflow ERROR] {e}")
         return None
-
     except Exception as e:
         print(f"[ERROR] Failed to load model: {e}")
         return None
 
-
 def download_artifacts(version):
-    """
-    Download underlying model artifacts (optional).
-    """
+    """Download underlying model artifacts."""
     if not version:
         print("[ERROR] Cannot download artifacts – version missing.")
         return None
 
     try:
-        artifact_uri = f"models:/{NAME}/{version.version}"
+        artifact_uri = f"models:/{MODEL_NAME}/{version.version}"
         print(f"[INFO] Downloading artifacts from: {artifact_uri}")
 
         downloaded_path = mlflow.artifacts.download_artifacts(
@@ -93,19 +82,16 @@ def download_artifacts(version):
         print(f"[ERROR] Failed to download artifacts: {e}")
         return None
 
-
 def main():
-    mlflow.set_tracking_uri(URI)
-    print(f"[INFO] MLflow tracking URI set to: {URI}")
+    mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+    print(f"[INFO] MLflow tracking URI set to: {MLFLOW_TRACKING_URI}")
 
     client = MlflowClient()
-
-    version = fetch(client, NAME)
+    version = fetch(client, MODEL_NAME)
 
     if version:
-        model = load_model(version)
+        load_model(version)
         download_artifacts(version)
-
 
 if __name__ == "__main__":
     try:

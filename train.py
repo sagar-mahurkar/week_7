@@ -7,19 +7,17 @@ from mlflow.tracking import MlflowClient
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.ensemble import RandomForestClassifier
 
-
 # --------------------------------------------------------------
 # Configuration
 # --------------------------------------------------------------
-MLFLOW_TRACKING_URI = "http://34.59.234.84:5000/"
+# Use env var, fallback to local MLflow server
+MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://127.0.0.1:5000/")
 MODEL_NAME = "iris-random-forest"
 RUN_NAME = "Random Forest Hyperparameter Search"
 
 LOCAL_MODEL_DIR = "artifacts"
 LOCAL_MODEL_PATH = os.path.join(LOCAL_MODEL_DIR, "random_forest_model.pkl")
-
 os.makedirs(LOCAL_MODEL_DIR, exist_ok=True)
-
 
 # --------------------------------------------------------------
 # Data Preparation
@@ -43,7 +41,6 @@ def prepare_data():
 
     except Exception as e:
         raise RuntimeError(f"Error preparing data: {e}")
-
 
 # --------------------------------------------------------------
 # Train + Hyperparameter Tune + Log to MLflow
@@ -82,14 +79,14 @@ def tune_random_forest(X_train, y_train, X_test, y_test):
             mlflow.log_metric("cv_accuracy", grid.best_score_)
             mlflow.log_metric("test_accuracy", best_model.score(X_test, y_test))
 
-            # Log model to MLflow Registry (fast — NO downloads)
+            # Log model to MLflow Registry
             mlflow.sklearn.log_model(
                 sk_model=best_model,
                 artifact_path="model",
                 registered_model_name=MODEL_NAME,
             )
 
-            # Save locally for FastAPI inference cache
+            # Save locally for inference cache
             joblib.dump(best_model, LOCAL_MODEL_PATH)
 
             return {
@@ -102,7 +99,6 @@ def tune_random_forest(X_train, y_train, X_test, y_test):
     except Exception as e:
         raise RuntimeError(f"Error during training: {e}")
 
-
 # --------------------------------------------------------------
 # Main Entry
 # --------------------------------------------------------------
@@ -113,8 +109,5 @@ def main():
     print("\n✅ Training Complete!")
     print(result)
 
-
 if __name__ == "__main__":
     main()
-
-        

@@ -6,6 +6,7 @@
 # - Caches model in memory + local file
 # - JSON-safe structured logging
 # - Readiness probe checks actual model availability
+# - MLflow Tracking URI configurable via env var (works locally and in GitHub Actions)
 # ==============================================================
 
 import os
@@ -54,7 +55,8 @@ logger.addHandler(handler)
 # --------------------------
 # Configuration
 # --------------------------
-MLFLOW_TRACKING_URI = "http://34.59.234.84:5000/"
+# Use env var for MLflow URI, fallback to local MLflow server
+MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://127.0.0.1:5000/")
 MODEL_NAME = "iris-random-forest"
 LOCAL_MODEL_DIR = "models"
 LOCAL_MODEL_PATH = os.path.join(LOCAL_MODEL_DIR, "model.pkl")
