@@ -146,9 +146,7 @@ jobs:
           echo "Testing external IP: $EXTERNAL_IP"
           wrk -t4 -c100 -d10 --latency -s scripts/post.lua http://$EXTERNAL_IP:80/predict >> $CML_REPORT_FILE || echo "Performance test failed"
 
-      # 17. Publish CML report as PR comment
+      # 17. Publish CML report as PR comment (no REPO_TOKEN)
       - name: Publish CML report
-        env:
-          REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cml comment create --publish $CML_REPORT_FILE
