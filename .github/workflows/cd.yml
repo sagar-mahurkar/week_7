@@ -139,4 +139,15 @@ jobs:
           sudo apt-get update && sudo apt-get install -y wrk
           EXTERNAL_IP=$(kubectl get service iris-workload-deployment-service -n "${NAMESPACE}" -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
           echo "Testing external IP: $EXTERNAL_IP"
-          wrk -t4 -c100 -d10 --latency -s scripts/post.lua http://$EXTERNAL_IP:80/predict || echo "Performance test failed"
+          wrk -t4 -c1000 -d60 --latency -s scripts/post.lua http://$EXTERNAL_IP:80/predict || echo "Performance test failed"
+      # 18. Debug: Performance Test - Single Pod
+      - name: Performance Test - Single Pod
+        run: |
+          sudo apt-get update && sudo apt-get install -y wrk
+          POD_NAME=$(kubectl get pods -n "${NAMESPACE}" -l app=${DEPLOYMENT_NAME} -o jsonpath='{.items[0].metadata.name}')
+          echo "Testing single pod: $POD_NAME"
+          EXTERNAL_IP=$(kubectl port-forward $POD_NAME 8080:80 -n "${NAMESPACE}" & echo $!)
+          sleep 5
+          wrk -t4 -c2000 -d60 --latency -s scripts/post.lua http://$EXTERNAL_IP:8080/predict || echo "Single pod performance test failed"
+          # Kill port-forward process
+          kill %1 || true
