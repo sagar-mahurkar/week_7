@@ -27,15 +27,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 2. Setup Python 3.11 for iterative-cml
+      # 2. Setup Python for CML
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: 3.11
 
-      # 3. Install iterative-cml
+      # 3. Install CML
       - name: Install CML
-        run: pip install --user iterative-cml
+        run: pip install --user cml
 
       # 4. Authenticate to Google Cloud
       - name: Authenticate to Google Cloud
@@ -75,7 +75,7 @@ jobs:
           IMAGE_URI="${GAR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE}:latest"
           docker build -t "$IMAGE_URI" .
 
-      # 10. Push Docker image to GAR
+      # 10. Push Docker image
       - name: Push Docker Image
         run: |
           IMAGE_URI="${GAR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE}:latest"
@@ -94,7 +94,6 @@ jobs:
         run: |
           if ! kubectl get serviceaccount "$SERVICE_ACCOUNT_NAME" -n "$NAMESPACE" >/dev/null 2>&1; then
             kubectl create serviceaccount "$SERVICE_ACCOUNT_NAME" -n "$NAMESPACE"
-          fi
 
       # 13. Annotate Kubernetes service account for Workload Identity
       - name: Annotate Kubernetes service account
@@ -110,7 +109,7 @@ jobs:
       - name: Apply Kubernetes manifests
         run: kubectl apply -f k8s/ -n "${NAMESPACE}"
 
-      # 15. Update deployment image (Rolling Update)
+      # 15. Update Deployment Image (Rolling Update)
       - name: Update Deployment Image
         run: |
           IMAGE_URI="${GAR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE}:latest"
@@ -118,13 +117,21 @@ jobs:
           kubectl set image deployment/${DEPLOYMENT_NAME} ${CONTAINER_NAME}=$IMAGE_URI -n "${NAMESPACE}"
           kubectl rollout status deployment/${DEPLOYMENT_NAME} -n "${NAMESPACE}" --timeout=5m
 
-      # 16. Generate CML report (Pods, Service Info, Performance)
+      # 16. Verify pods
+      - name: Verify Pods
+        run: kubectl get pods -n "${NAMESPACE}" -o wide
+
+      # 17. Get service info
+      - name: Get Service Info
+        run: kubectl get service -n "${NAMESPACE}"
+
+      # 18. Generate CML report
       - name: Generate CML report
         run: |
           mkdir -p cml_reports
           echo "## Pods Status" > $CML_REPORT_FILE
           
-          # Wait until all pods are READY
+          # Wait until all pods are READY (max 5 minutes)
           for i in {1..30}; do
             NOT_READY=$(kubectl get pods -n "${NAMESPACE}" -l app=${DEPLOYMENT_NAME} \
               -o jsonpath='{.items[?(@.status.containerStatuses[0].ready==false)].metadata.name}')
@@ -147,5 +154,4 @@ jobs:
           echo "Testing external IP: $EXTERNAL_IP"
           wrk -t4 -c100 -d10 --latency -s scripts/post.lua http://$EXTERNAL_IP:80/predict >> $CML_REPORT_FILE || echo "Performance test failed"
 
-          # Show report in logs
           cat $CML_REPORT_FILE
