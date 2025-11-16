@@ -78,33 +78,14 @@ jobs:
           fi
           kubectl config current-context
 
-      # 10. Optional: Create GCP service account (run once manually)
-      - name: Create GCP service account
-        if: false
-        run: |
-          if ! gcloud iam service-accounts list --filter="email:${SERVICE_ACCOUNT_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" --format="value(email)" | grep -q "$SERVICE_ACCOUNT_NAME"; then
-            gcloud iam service-accounts create "$SERVICE_ACCOUNT_NAME" --display-name "Access for GKE ML service"
-          fi
-
-      # 11. Optional: Bind IAM roles (run manually)
-      - name: Bind IAM roles
-        if: false
-        run: |
-          gcloud projects add-iam-policy-binding $PROJECT_ID \
-            --member="serviceAccount:${SERVICE_ACCOUNT_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
-            --role="roles/logging.logWriter"
-          gcloud projects add-iam-policy-binding $PROJECT_ID \
-            --member="serviceAccount:${SERVICE_ACCOUNT_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
-            --role="roles/cloudtrace.agent"
-
-      # 12. Create Kubernetes service account
+      # 10. Create Kubernetes service account
       - name: Create Kubernetes service account
         run: |
           if ! kubectl get serviceaccount "$SERVICE_ACCOUNT_NAME" -n "$NAMESPACE" >/dev/null 2>&1; then
             kubectl create serviceaccount "$SERVICE_ACCOUNT_NAME" -n "$NAMESPACE"
           fi
 
-      # 13. Annotate Kubernetes service account for Workload Identity
+      # 11. Annotate Kubernetes service account for Workload Identity
       - name: Annotate Kubernetes service account
         run: |
           kubectl annotate serviceaccount "${SERVICE_ACCOUNT_NAME}" \
@@ -112,13 +93,13 @@ jobs:
             iam.gke.io/gcp-service-account="${SERVICE_ACCOUNT_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" --overwrite
           gcloud iam service-accounts add-iam-policy-binding "${SERVICE_ACCOUNT_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
             --role=roles/iam.workloadIdentityUser \
-            --member="serviceAccount:${PROJECT_ID}.svc.id.goog[${NAMESPACE}/${SERVICE_ACCOUNT_NAME}]"
+            --member="serviceAccount:${PROJECT_ID}.svc.id.goog[${NAMESPACE}/${SERVICE_ACCOUNT_NAME}]" || true
 
-      # 14. Apply Kubernetes manifests
+      # 12. Apply Kubernetes manifests
       - name: Apply Kubernetes manifests
         run: kubectl apply -f k8s/ -n "${NAMESPACE}"
 
-      # 15. Update deployment image (Rolling Update)
+      # 13. Update deployment image (Rolling Update)
       - name: Update Deployment Image
         run: |
           IMAGE_URI="${GAR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE}:latest"
@@ -126,37 +107,36 @@ jobs:
           kubectl set image deployment/${DEPLOYMENT_NAME} ${CONTAINER_NAME}=$IMAGE_URI -n "${NAMESPACE}"
           kubectl rollout status deployment/${DEPLOYMENT_NAME} -n "${NAMESPACE}" --timeout=5m
 
-      # 16. Verify pods and save output
+      # 14. Verify pods
       - name: Verify Pods
-        id: verify_pods
-        run: |
-          mkdir -p cml_reports
-          kubectl get pods -n "${NAMESPACE}" -o wide | tee cml_reports/cml_report.md
+        run: kubectl get pods -n "${NAMESPACE}" -o wide
 
-      # 17. Get service info and append to report
+      # 15. Get service info
       - name: Get Service Info
-        id: get_service
-        run: |
-          echo "" >> cml_reports/cml_report.md
-          echo "## Service Info" >> cml_reports/cml_report.md
-          kubectl get service -n "${NAMESPACE}" | tee -a cml_reports/cml_report.md
+        run: kubectl get service -n "${NAMESPACE}"
 
-      # 18. Optional performance test and append to report
+      # 16. Optional performance test (requires wrk)
       - name: Run performance test
         if: github.ref == 'refs/heads/main'
-        id: perf_test
         run: |
           sudo apt-get update && sudo apt-get install -y wrk
           EXTERNAL_IP=$(kubectl get service iris-workload-deployment-service -n "${NAMESPACE}" -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-          echo "" >> cml_reports/cml_report.md
-          echo "## Performance Test Results" >> cml_reports/cml_report.md
-          echo "Testing external IP: $EXTERNAL_IP" >> cml_reports/cml_report.md
-          wrk -t4 -c100 -d30 --latency -s scripts/post.lua http://$EXTERNAL_IP:80/predict | tee -a cml_reports/cml_report.md || true
+          wrk -t4 -c100 -d30 --latency -s scripts/post.lua http://$EXTERNAL_IP:80/predict
 
-      # 19. Post CML Report as GitHub Comment
-      - name: Post CML Report Comment
-        uses: iterative/cml@v2
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          file: cml_reports/cml_report.md
+      # 17. Setup CML
+      - name: Setup CML
+        uses: iterative/setup-cml@v1
 
+      # 18. Create CML Report
+      - name: Create CML Report
+        env:
+          REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p cml_reports
+          kubectl get pods -n "${NAMESPACE}" -o wide > cml_reports/report.md
+          echo "\n## Service Info\n" >> cml_reports/report.md
+          kubectl get service -n "${NAMESPACE}" >> cml_reports/report.md
+          echo "\n## Performance Test\n" >> cml_reports/report.md
+          EXTERNAL_IP=$(kubectl get service iris-workload-deployment-service -n "${NAMESPACE}" -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          wrk -t4 -c100 -d30 --latency -s scripts/post.lua http://$EXTERNAL_IP:80/predict >> cml_reports/report.md || true
+          cml comment create cml_reports/report.md
