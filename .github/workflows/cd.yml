@@ -144,27 +144,26 @@ jobs:
       # 18. Debug: Performance Test - Single Pod
       - name: Apply single-pod HPA and run performance test
         run: |
-          # Apply HorizontalPodAutoscaler YAML
           cat <<EOF | kubectl apply -f -
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: iris-workload-deployment-hpa
-  namespace: default
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: iris-workload-deployment
-  minReplicas: 1
-  maxReplicas: 1
-  metrics:
-    - type: Resource
-      resource:
-        name: cpu
-        target:
-          type: Utilization
-          averageUtilization: 60
+          apiVersion: autoscaling/v2
+          kind: HorizontalPodAutoscaler
+          metadata:
+            name: iris-workload-deployment-hpa
+            namespace: default
+          spec:
+            scaleTargetRef:
+              apiVersion: apps/v1
+              kind: Deployment
+              name: iris-workload-deployment
+            minReplicas: 1
+            maxReplicas: 1
+            metrics:
+              - type: Resource
+                resource:
+                  name: cpu
+                  target:
+                    type: Utilization
+                    averageUtilization: 60
 EOF
 
           # Scale deployment to 1 pod
