@@ -19,7 +19,7 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.exporter.cloud_trace import CloudTraceSpanExporter
 
 # -------------------------- Configuration --------------------------
-MLFLOW_TRACKING_URI = "http://34.122.49.196:5000"
+MLFLOW_TRACKING_URI = "http://34.170.88.52:5000"
 MODEL_NAME = "iris-random-forest"
 LOCAL_MODEL_DIR = "models"
 LOCAL_MODEL_PATH = os.path.join(LOCAL_MODEL_DIR, "model.pkl")
