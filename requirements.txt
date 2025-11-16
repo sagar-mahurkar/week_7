@@ -1,10 +1,12 @@
-pandas
-numpy
-scikit-learn
-matplotlib
-joblib
-tzdata
 dvc
 dvc-gs
-pytest
+joblib
+matplotlib
 mlflow
+numpy
+# Exporter for Google Cloud
+opentelemetry-exporter-gcp-trace
+pandas
+pytest
+scikit-learn
+tzdata
