@@ -27,11 +27,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 2. Setup Python 3.10
+      # 2. Setup Python 3.9
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
-          python-version: "3.10"
+          python-version: "3.9"
 
       # 3. Setup CML for report generation
       - uses: iterative/setup-cml@v2
