@@ -5,7 +5,7 @@ from mlflow.tracking import MlflowClient
 from mlflow.exceptions import MlflowException
 
 # -------------------------- Configuration --------------------------
-MLFLOW_TRACKING_URI = os.environ.get("MLFLOW_TRACKING_URI", "http://127.0.0.1:5000")
+MLFLOW_TRACKING_URI = "http://34.170.88.52:5000"
 MODEL_NAME = "iris-random-forest"
 DOWNLOAD_DIR = "downloaded_models"
 LOCAL_MODEL_PATH = os.path.join(DOWNLOAD_DIR, "model.pkl")
