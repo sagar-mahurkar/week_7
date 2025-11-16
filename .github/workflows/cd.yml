@@ -4,73 +4,81 @@ on:
   push:
     branches:
       - main
-  workflow_dispatch:  # Allow manual triggering
+  workflow_dispatch:
 
 env:
-  # ======== Environment Variables (from GitHub Secrets) ===========
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-  GAR_LOCATION: us-central1             # Artifact Registry region
-  REPOSITORY: ${{ secrets.GAR_REPO }}   # GAR repo name
-  IMAGE: iris-api                       # Image name
-  CLUSTER_NAME: ${{ secrets.GKE_CLUSTER }}
-  CLUSTER_LOCATION: ${{ secrets.GKE_LOCATION }} # Could be zone or region
+  GAR_LOCATION: us-central1                    # Artifact Registry region
+  REPOSITORY: ${{ secrets.GAR_REPO }}         # GAR repo (dynamic)
+  IMAGE: iris-api                             
+  CLUSTER_NAME: ${{ secrets.GKE_CLUSTER }}    
+  CLUSTER_LOCATION: ${{ secrets.GKE_LOCATION }}
   DEPLOYMENT_NAME: iris-workload-deployment
   NAMESPACE: default
 
 jobs:
   deploy:
-    name: Deploy FastAPI to GKE
     runs-on: ubuntu-latest
 
     steps:
+
       # -------------------------------------------------------------
-      # 1. Checkout source code
+      # 1. Checkout Repo
       # -------------------------------------------------------------
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
       # -------------------------------------------------------------
-      # 2. Authenticate GitHub Action to Google Cloud
+      # 2. Authenticate to GCP
       # -------------------------------------------------------------
-      - name: Authenticate Google Cloud
+      - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_CREDENTIALS_JSON }}
 
       # -------------------------------------------------------------
-      # 3. Setup gcloud SDK
+      # 3. Initialize gcloud
       # -------------------------------------------------------------
-      - name: Setup gcloud CLI
+      - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ env.PROJECT_ID }}
           export_default_credentials: true
 
       # -------------------------------------------------------------
-      # 4. Install GKE Auth plugin (required for kubectl)
+      # 4. Install GKE auth plugin
       # -------------------------------------------------------------
       - name: Install GKE Auth Plugin
         run: gcloud components install gke-gcloud-auth-plugin --quiet
 
       # -------------------------------------------------------------
-      # 5. Debug GCP authentication
+      # 5. Ensure Artifact Registry Repository Exists
       # -------------------------------------------------------------
-      - name: Debug Google Cloud authentication & project
+      - name: Create Artifact Registry repository if missing
         run: |
-          echo "🔍 Active account:"
-          gcloud auth list
-          echo "🔍 Current GCP Project:"
-          gcloud config list project
-          echo "🔍 Artifact Registry Repositories:"
-          gcloud artifacts repositories list \
-            --location=${{ env.GAR_LOCATION }} \
-            --project=${{ env.PROJECT_ID }}
+          echo "🔍 Checking if GAR repo '${REPOSITORY}' exists in region '${GAR_LOCATION}'..."
+
+          if gcloud artifacts repositories describe "${REPOSITORY}" \
+            --location="${GAR_LOCATION}" \
+            --project="${PROJECT_ID}" >/dev/null 2>&1; then
+
+            echo "✅ Repository '${REPOSITORY}' already exists."
+
+          else
+            echo "⚠️ Repository '${REPOSITORY}' does not exist. Creating..."
+            gcloud artifacts repositories create "${REPOSITORY}" \
+              --repository-format=docker \
+              --location="${GAR_LOCATION}" \
+              --description="Docker repo for FastAPI deployment" \
+              --project="${PROJECT_ID}"
+            echo "🎉 Repository created successfully!"
+          fi
 
       # -------------------------------------------------------------
-      # 6. Configure Docker to push to Artifact Registry
+      # 6. Configure Docker for GAR
       # -------------------------------------------------------------
-      - name: Configure Docker for Artifact Registry
-        run: gcloud auth configure-docker ${GAR_LOCATION}-docker.pkg.dev --quiet
+      - name: Configure Docker
+        run: gcloud auth configure-docker "${GAR_LOCATION}-docker.pkg.dev" --quiet
 
       # -------------------------------------------------------------
       # 7. Build Docker image
@@ -78,98 +86,76 @@ jobs:
       - name: Build Docker Image
         run: |
           IMAGE_URI="${GAR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE}:latest"
-          echo "📦 Building Docker image: $IMAGE_URI"
+          echo "📦 Building image: $IMAGE_URI"
           docker build -t "$IMAGE_URI" .
 
       # -------------------------------------------------------------
-      # 8. Push the image to Google Artifact Registry
+      # 8. Push Docker image to GAR
       # -------------------------------------------------------------
       - name: Push Docker Image
         run: |
           IMAGE_URI="${GAR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE}:latest"
-          echo "🚀 Pushing Docker image: $IMAGE_URI"
+          echo "🚀 Pushing image: $IMAGE_URI"
           docker push "$IMAGE_URI"
 
       # -------------------------------------------------------------
-      # 9. List GKE clusters (debugging)
+      # 9. Get GKE Cluster Credentials
       # -------------------------------------------------------------
-      - name: List GKE clusters
+      - name: Fetch GKE Credentials
         run: |
-          echo "🔍 Listing GKE clusters..."
-          gcloud container clusters list --project ${PROJECT_ID}
+          echo "🔍 Getting GKE credentials..."
 
-      # -------------------------------------------------------------
-      # 10. Get Kubernetes credentials for kubectl
-      #     Try region first → fallback to zone
-      # -------------------------------------------------------------
-      - name: Get GKE credentials
-        run: |
-          echo "🔍 Fetching GKE credentials for cluster '${CLUSTER_NAME}'..."
-          
-          # Try region first
+          # Try region first → fallback to zone
           if ! gcloud container clusters get-credentials "${CLUSTER_NAME}" \
               --region "${CLUSTER_LOCATION}" \
               --project "${PROJECT_ID}"; then
-            # Fallback to zone
+            
+            echo "⚠️ Region lookup failed, trying zone..."
             gcloud container clusters get-credentials "${CLUSTER_NAME}" \
               --zone "${CLUSTER_LOCATION}" \
               --project "${PROJECT_ID}"
           fi
 
-          echo "✅ GKE credentials set. Current kubectl context:"
+          echo "✅ Connected to cluster:"
           kubectl config current-context
 
       # -------------------------------------------------------------
-      # 11. Apply all Kubernetes YAML files (deployments, services etc.)
+      # 10. Apply Kubernetes Manifests
       # -------------------------------------------------------------
       - name: Apply Kubernetes manifests
         run: |
-          echo "📄 Applying all Kubernetes manifests from k8s/ folder..."
+          echo "📄 Applying manifests from k8s/"
           kubectl apply -f k8s/ -n "${NAMESPACE}"
 
       # -------------------------------------------------------------
-      # 12. Update only the image in the Deployment (rolling update)
+      # 11. Update Deployment image (Rolling Update)
       # -------------------------------------------------------------
-      - name: Deploy updated Docker image to GKE
+      - name: Update Deployment Image
         run: |
-          set -e  # Exit on any error
-
           IMAGE_URI="${GAR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE}:latest"
 
-          echo "🔄 Updating deployment '${DEPLOYMENT_NAME}' with new image..."
+          echo "🔄 Updating Deployment: ${DEPLOYMENT_NAME}"
           echo "👉 New image: ${IMAGE_URI}"
 
-          # Detect container name from Deployment
           CONTAINER_NAME=$(kubectl get deployment "${DEPLOYMENT_NAME}" \
             -n "${NAMESPACE}" \
-            -o jsonpath='{.spec.template.spec.containers[0].name}' 2>/dev/null || echo "")
+            -o jsonpath='{.spec.template.spec.containers[0].name}')
 
-          if [ -z "$CONTAINER_NAME" ]; then
-            echo "⚠️ No container name found in deployment. Using deployment name as fallback."
-            CONTAINER_NAME="${DEPLOYMENT_NAME}"
-          fi
+          echo "📦 Target container: ${CONTAINER_NAME}"
 
-          echo "📦 Updating container: ${CONTAINER_NAME}"
-
-          # Update image
           kubectl set image deployment/${DEPLOYMENT_NAME} \
             ${CONTAINER_NAME}=${IMAGE_URI} -n "${NAMESPACE}"
 
-          # Wait for rollout to finish
-          echo "⏳ Waiting for rollout to complete..."
-          if ! kubectl rollout status deployment/${DEPLOYMENT_NAME} \
-            -n "${NAMESPACE}" --timeout=5m; then
-            echo "❌ Rollout failed! Gathering diagnostics..."
-            kubectl describe deployment ${DEPLOYMENT_NAME} -n "${NAMESPACE}" || true
-            exit 1
-          fi
+          echo "⏳ Waiting for rollout..."
+          kubectl rollout status deployment/${DEPLOYMENT_NAME} \
+            -n "${NAMESPACE}" --timeout=5m
 
-          echo "✅ Deployment updated successfully."
+          echo "✅ Deployment updated."
 
       # -------------------------------------------------------------
-      # 13. Verify running pods
+      # 12. Verify Pods
       # -------------------------------------------------------------
       - name: Verify Pods
         run: |
-          echo "🔍 Listing pods in namespace '${NAMESPACE}'..."
+          echo "🔍 Listing pods..."
           kubectl get pods -n "${NAMESPACE}" -o wide
