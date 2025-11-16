@@ -112,3 +112,31 @@ jobs:
           CONTAINER_NAME=$(kubectl get deployment "${DEPLOYMENT_NAME}" -n "${NAMESPACE}" -o jsonpath='{.spec.template.spec.containers[0].name}')
           kubectl set image deployment/${DEPLOYMENT_NAME} ${CONTAINER_NAME}=$IMAGE_URI -n "${NAMESPACE}"
           kubectl rollout status deployment/${DEPLOYMENT_NAME} -n "${NAMESPACE}" --timeout=5m
+
+      # 15. Debug: Wait for all pods to be ready and show pod info
+      - name: Verify Pods
+        run: |
+          for i in {1..30}; do
+            NOT_READY=$(kubectl get pods -n "${NAMESPACE}" -l app=${DEPLOYMENT_NAME} \
+              -o jsonpath='{.items[?(@.status.containerStatuses[0].ready==false)].metadata.name}')
+            if [ -z "$NOT_READY" ]; then
+              echo "✅ All pods are ready."
+              break
+            else
+              echo "Waiting for pods: $NOT_READY"
+              sleep 10
+            fi
+          done
+          kubectl get pods -n "${NAMESPACE}" -o wide
+
+      # 16. Debug: Show service info
+      - name: Get Service Info
+        run: kubectl get service -n "${NAMESPACE}"
+
+      # 17. Debug: Performance Test
+      - name: Performance Test
+        run: |
+          sudo apt-get update && sudo apt-get install -y wrk
+          EXTERNAL_IP=$(kubectl get service iris-workload-deployment-service -n "${NAMESPACE}" -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          echo "Testing external IP: $EXTERNAL_IP"
+          wrk -t4 -c100 -d10 --latency -s scripts/post.lua http://$EXTERNAL_IP:80/predict || echo "Performance test failed"
