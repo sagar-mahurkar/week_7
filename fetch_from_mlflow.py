@@ -5,7 +5,7 @@ from mlflow.tracking import MlflowClient
 from mlflow.exceptions import MlflowException
 
 URI = "http://34.59.234.84:5000/"
-NAME = "iris-random-float"
+NAME = "iris-random-forest"
 SAVE_LOCAL = "downloaded_models/model.pkl"
 
 os.makedirs("downloaded_models", exist_ok=True)
