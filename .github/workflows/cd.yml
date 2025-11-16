@@ -164,7 +164,7 @@ jobs:
                   target:
                     type: Utilization
                     averageUtilization: 60
-EOF
+          EOF
 
           # Scale deployment to 1 pod
           kubectl scale deployment ${DEPLOYMENT_NAME} --replicas=1 -n "${NAMESPACE}"
