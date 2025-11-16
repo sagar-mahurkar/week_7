@@ -8,154 +8,131 @@ on:
 
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-  GAR_LOCATION: us-central1                    # Artifact Registry region
-  REPOSITORY: ${{ secrets.GAR_REPO }}         # GAR repo (dynamic)
-  IMAGE: iris-api                             
-  CLUSTER_NAME: ${{ secrets.GKE_CLUSTER }}    
+  GAR_LOCATION: us-central1
+  REPOSITORY: ${{ secrets.GAR_REPO }}
+  IMAGE: iris-api
+  CLUSTER_NAME: ${{ secrets.GKE_CLUSTER }}
   CLUSTER_LOCATION: ${{ secrets.GKE_LOCATION }}
   DEPLOYMENT_NAME: iris-workload-deployment
   NAMESPACE: default
+  SERVICE_ACCOUNT_NAME: telemetry-access
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-
     steps:
 
-      # -------------------------------------------------------------
       # 1. Checkout Repo
-      # -------------------------------------------------------------
       - name: Checkout
         uses: actions/checkout@v4
 
-      # -------------------------------------------------------------
-      # 2. Authenticate to GCP
-      # -------------------------------------------------------------
+      # 2. Authenticate to Google Cloud
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_CREDENTIALS_JSON }}
 
-      # -------------------------------------------------------------
-      # 3. Initialize gcloud
-      # -------------------------------------------------------------
+      # 3. Setup gcloud
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ env.PROJECT_ID }}
           export_default_credentials: true
 
-      # -------------------------------------------------------------
       # 4. Install GKE auth plugin
-      # -------------------------------------------------------------
       - name: Install GKE Auth Plugin
         run: gcloud components install gke-gcloud-auth-plugin --quiet
 
-      # -------------------------------------------------------------
       # 5. Ensure Artifact Registry Repository Exists
-      # -------------------------------------------------------------
-      - name: Create Artifact Registry repository if missing
+      - name: Ensure GAR repository exists
         run: |
-          echo "🔍 Checking if GAR repo '${REPOSITORY}' exists in region '${GAR_LOCATION}'..."
-
-          if gcloud artifacts repositories describe "${REPOSITORY}" \
-            --location="${GAR_LOCATION}" \
-            --project="${PROJECT_ID}" >/dev/null 2>&1; then
-
-            echo "✅ Repository '${REPOSITORY}' already exists."
-
-          else
-            echo "⚠️ Repository '${REPOSITORY}' does not exist. Creating..."
+          if ! gcloud artifacts repositories describe "${REPOSITORY}" --location="${GAR_LOCATION}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
             gcloud artifacts repositories create "${REPOSITORY}" \
               --repository-format=docker \
               --location="${GAR_LOCATION}" \
               --description="Docker repo for FastAPI deployment" \
               --project="${PROJECT_ID}"
-            echo "🎉 Repository created successfully!"
           fi
 
-      # -------------------------------------------------------------
       # 6. Configure Docker for GAR
-      # -------------------------------------------------------------
       - name: Configure Docker
         run: gcloud auth configure-docker "${GAR_LOCATION}-docker.pkg.dev" --quiet
 
-      # -------------------------------------------------------------
       # 7. Build Docker image
-      # -------------------------------------------------------------
       - name: Build Docker Image
         run: |
           IMAGE_URI="${GAR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE}:latest"
-          echo "📦 Building image: $IMAGE_URI"
           docker build -t "$IMAGE_URI" .
 
-      # -------------------------------------------------------------
       # 8. Push Docker image to GAR
-      # -------------------------------------------------------------
       - name: Push Docker Image
         run: |
           IMAGE_URI="${GAR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE}:latest"
-          echo "🚀 Pushing image: $IMAGE_URI"
           docker push "$IMAGE_URI"
 
-      # -------------------------------------------------------------
-      # 9. Get GKE Cluster Credentials
-      # -------------------------------------------------------------
+      # 9. Get GKE cluster credentials
       - name: Fetch GKE Credentials
         run: |
-          echo "🔍 Getting GKE credentials..."
-
-          # Try region first → fallback to zone
-          if ! gcloud container clusters get-credentials "${CLUSTER_NAME}" \
-              --region "${CLUSTER_LOCATION}" \
-              --project "${PROJECT_ID}"; then
-            
-            echo "⚠️ Region lookup failed, trying zone..."
-            gcloud container clusters get-credentials "${CLUSTER_NAME}" \
-              --zone "${CLUSTER_LOCATION}" \
-              --project "${PROJECT_ID}"
+          if ! gcloud container clusters get-credentials "${CLUSTER_NAME}" --region "${CLUSTER_LOCATION}" --project "${PROJECT_ID}"; then
+            gcloud container clusters get-credentials "${CLUSTER_NAME}" --zone "${CLUSTER_LOCATION}" --project "${PROJECT_ID}"
           fi
-
-          echo "✅ Connected to cluster:"
           kubectl config current-context
 
-      # -------------------------------------------------------------
-      # 10. Apply Kubernetes Manifests
-      # -------------------------------------------------------------
-      - name: Apply Kubernetes manifests
+      # 10. Create Google Cloud service account
+      - name: Create GCP service account
         run: |
-          echo "📄 Applying manifests from k8s/"
-          kubectl apply -f k8s/ -n "${NAMESPACE}"
+          if ! gcloud iam service-accounts list --filter="email:${SERVICE_ACCOUNT_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" --format="value(email)" | grep -q "$SERVICE_ACCOUNT_NAME"; then
+            gcloud iam service-accounts create "$SERVICE_ACCOUNT_NAME" --display-name "Access for GKE ML service"
+          fi
 
-      # -------------------------------------------------------------
-      # 11. Update Deployment image (Rolling Update)
-      # -------------------------------------------------------------
+      # 11. Bind IAM roles to service account
+      - name: Bind IAM roles
+        run: |
+          gcloud projects add-iam-policy-binding $PROJECT_ID --member="serviceAccount:${SERVICE_ACCOUNT_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" --role="roles/logging.logWriter"
+          gcloud projects add-iam-policy-binding $PROJECT_ID --member="serviceAccount:${SERVICE_ACCOUNT_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" --role="roles/cloudtrace.agent"
+
+      # 12. Create Kubernetes service account
+      - name: Create Kubernetes service account
+        run: |
+          if ! kubectl get serviceaccount "${SERVICE_ACCOUNT_NAME}" -n "${NAMESPACE}" >/dev/null 2>&1; then
+            kubectl create serviceaccount "${SERVICE_ACCOUNT_NAME}" -n "${NAMESPACE}"
+          fi
+
+      # 13. Annotate Kubernetes service account for Workload Identity
+      - name: Annotate Kubernetes service account
+        run: |
+          kubectl annotate serviceaccount "${SERVICE_ACCOUNT_NAME}" \
+            --namespace "${NAMESPACE}" \
+            iam.gke.io/gcp-service-account="${SERVICE_ACCOUNT_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" --overwrite
+          gcloud iam service-accounts add-iam-policy-binding "${SERVICE_ACCOUNT_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" \
+            --role=roles/iam.workloadIdentityUser \
+            --member="serviceAccount:${PROJECT_ID}.svc.id.goog[${NAMESPACE}/${SERVICE_ACCOUNT_NAME}]"
+
+      # 14. Apply Kubernetes manifests
+      - name: Apply Kubernetes manifests
+        run: kubectl apply -f k8s/ -n "${NAMESPACE}"
+
+      # 15. Update deployment image (Rolling Update)
       - name: Update Deployment Image
         run: |
           IMAGE_URI="${GAR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE}:latest"
+          CONTAINER_NAME=$(kubectl get deployment "${DEPLOYMENT_NAME}" -n "${NAMESPACE}" -o jsonpath='{.spec.template.spec.containers[0].name}')
+          kubectl set image deployment/${DEPLOYMENT_NAME} ${CONTAINER_NAME}=$IMAGE_URI -n "${NAMESPACE}"
+          kubectl rollout status deployment/${DEPLOYMENT_NAME} -n "${NAMESPACE}" --timeout=5m
 
-          echo "🔄 Updating Deployment: ${DEPLOYMENT_NAME}"
-          echo "👉 New image: ${IMAGE_URI}"
-
-          CONTAINER_NAME=$(kubectl get deployment "${DEPLOYMENT_NAME}" \
-            -n "${NAMESPACE}" \
-            -o jsonpath='{.spec.template.spec.containers[0].name}')
-
-          echo "📦 Target container: ${CONTAINER_NAME}"
-
-          kubectl set image deployment/${DEPLOYMENT_NAME} \
-            ${CONTAINER_NAME}=${IMAGE_URI} -n "${NAMESPACE}"
-
-          echo "⏳ Waiting for rollout..."
-          kubectl rollout status deployment/${DEPLOYMENT_NAME} \
-            -n "${NAMESPACE}" --timeout=5m
-
-          echo "✅ Deployment updated."
-
-      # -------------------------------------------------------------
-      # 12. Verify Pods
-      # -------------------------------------------------------------
+      # 16. Verify pods
       - name: Verify Pods
+        run: kubectl get pods -n "${NAMESPACE}" -o wide
+
+      # 17. Get service info
+      - name: Get Service Info
+        run: kubectl get service -n "${NAMESPACE}"
+
+      # 18. Optional performance test (requires wrk)
+      - name: Run performance test
+        if: github.ref == 'refs/heads/main'
         run: |
-          echo "🔍 Listing pods..."
-          kubectl get pods -n "${NAMESPACE}" -o wide
+          sudo apt-get update && sudo apt-get install -y wrk
+          EXTERNAL_IP=$(kubectl get service iris-workload-deployment-service -n "${NAMESPACE}" -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          echo "Testing external IP: $EXTERNAL_IP"
+          wrk -t4 -c100 -d30 --latency -s scripts/post.lua http://$EXTERNAL_IP:80/predict
